@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.exception_handlers import http_exception_handler
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
@@ -42,3 +42,8 @@ async def game_for_browsers(request, exc):
     if "text/html" in request.headers.get("accept", "") and not request.url.path.startswith("/api/"):
         return HTMLResponse(GAME_PAGE, status_code=exc.status_code)
     return await http_exception_handler(request, exc)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return FileResponse("static/favicon.ico")
