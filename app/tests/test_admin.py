@@ -1,6 +1,7 @@
 import sqlite3
 
 import config
+from services import gdrive
 from tests.conftest import new_device
 
 
@@ -73,3 +74,41 @@ def test_old_databases_gain_new_upload_columns(tmp_path, monkeypatch):
     cols = {r[1] for r in c.execute("PRAGMA table_info(uploaded_files)")}
     assert {"size", "created_at", "note"} <= cols
     db.init_db()  # idempotent
+
+
+def test_me_and_list_expose_link_and_folder_path(admin, drive):
+    assert admin.get("/admin/api/me").json() == {"email": "admin@example.com"}
+
+    inbox = drive.add_folder("Inbox")
+    other = drive.add_folder("Other")
+    a = admin.post("/admin/api/dropboxes", json={"name": "A", "gdrive_folder_id": inbox,
+                                                 "gdrive_folder_path": "My Drive / Work / Inbox"}).json()
+    b = admin.post("/admin/api/dropboxes", json={"name": "B", "gdrive_folder_id": other}).json()
+    rows = {r["id"]: r for r in admin.get("/admin/api/dropboxes").json()}
+    assert rows[a["id"]]["gdrive_folder_path"] == "My Drive / Work / Inbox"
+    assert rows[b["id"]]["gdrive_folder_path"] == "Other"  # falls back to the folder's own name
+    assert rows[a["id"]]["url"] == f"{config.BASE_URL}/drop/{a['id']}"
+
+
+def test_me_requires_login(app):
+    assert app.get("/admin/api/me").status_code == 401
+
+
+def test_list_resolves_and_caches_legacy_folder_paths(admin, drive, make_box):
+    drive.files["root"] = {"id": "root", "name": "My Drive", "mimeType": gdrive.FOLDER_MIME}
+    work = drive.add_folder("Work")
+    box_id, inbox = make_box()
+    drive.files[inbox].update(name="Inbox", parents=[work])
+    gone_id, _ = make_box()
+    db = sqlite3.connect(config.DB_PATH)
+    db.execute("UPDATE dropboxes SET gdrive_folder_id = 'missing' WHERE id = ?", (gone_id,))
+    db.commit()
+
+    rows = {r["id"]: r for r in admin.get("/admin/api/dropboxes").json()}
+    assert rows[box_id]["gdrive_folder_path"] == "My Drive / Work / Inbox"
+    assert rows[gone_id]["gdrive_folder_path"] is None  # lookup failed: the UI falls back
+
+    stored = dict(db.execute("SELECT id, gdrive_folder_path FROM dropboxes").fetchall())
+    assert stored[box_id] == "My Drive / Work / Inbox" and stored[gone_id] is None
+    drive.files.pop(inbox)  # served from the cache from now on
+    assert {r["id"]: r for r in admin.get("/admin/api/dropboxes").json()}[box_id]["gdrive_folder_path"] == "My Drive / Work / Inbox"

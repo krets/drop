@@ -15,6 +15,8 @@ def init_db() -> None:
         for col, decl in (("size", "INTEGER"), ("created_at", "TEXT"), ("note", "TEXT")):
             if col not in have:
                 conn.execute(f"ALTER TABLE uploaded_files ADD COLUMN {col} {decl}")
+        if "gdrive_folder_path" not in {row[1] for row in conn.execute("PRAGMA table_info(dropboxes)")}:
+            conn.execute("ALTER TABLE dropboxes ADD COLUMN gdrive_folder_path TEXT")
         # an interrupted upload leaves a row that no Drive file backs
         conn.execute("DELETE FROM uploaded_files WHERE status = 'uploading'")
         conn.executemany(

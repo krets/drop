@@ -12,6 +12,13 @@
     --shadow: 0 8px 24px rgb(1 4 9 / .6);
   }
 }
+/* Pages that always want dark (the admin UI) set data-theme="dark" on <html>. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0d1117; --fg: #e6edf3; --muted: #8b949e; --border: #30363d;
+  --surface: #161b22; --hover: #262c36; --accent: #4493f8; --accent-soft: #112a45; --danger: #f85149;
+  --shadow: 0 8px 24px rgb(1 4 9 / .6);
+}
 body { background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }
 a { color: var(--accent); }
 button, input, textarea, select {

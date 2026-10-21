@@ -176,7 +176,9 @@ def make_box(app, drive):
         pw = bcrypt.hashpw(password.encode(), bcrypt.gensalt(4)).decode() if password else None
         db = sqlite3.connect(config.DB_PATH)
         db.execute(
-            "INSERT INTO dropboxes VALUES (?, ?, 'Test box', ?, 'admin@example.com', ?, ?, ?, ?, ?)",
+            "INSERT INTO dropboxes (id, gdrive_folder_id, name, password_hash, created_by, created_at,"
+            " expires_at, onboard_window_hours, max_devices, is_revoked)"
+            " VALUES (?, ?, 'Test box', ?, 'admin@example.com', ?, ?, ?, ?, ?)",
             (box_id, folder, pw, (now - timedelta(hours=0)).isoformat(),
              (now + timedelta(days=days)).isoformat(), window_hours, max_devices, revoked))
         db.commit()

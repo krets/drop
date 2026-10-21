@@ -1,108 +1,713 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dropbox admin</title>
   <link rel="stylesheet" href="/static/theme.css">
   <style>
-    body { font: 16px system-ui, sans-serif; max-width: 52rem; margin: 2rem auto; padding: 0 1rem; }
-    label { display: block; margin: .6rem 0 .2rem; }
-        textarea { width: 100%; box-sizing: border-box; }
-    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
-    td, th { border-bottom: 1px solid #8884; padding: .4rem; text-align: left; }
-    .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
-    .crumbs button { margin-right: .25rem; }
+    :root { --ok: #3fb950; --warn: #d29922; --s1: 8px; --s2: 16px; --s3: 24px; --s4: 32px; --s5: 40px; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-size: 15px; }
+    h1, h2, h3, p { margin: 0; }
+    body:has(dialog[open]) { overflow: hidden; }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 0 var(--s2); }
+    [hidden] { display: none !important; }
+    .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+    /* header */
+    .bar { background: var(--surface); border-bottom: 1px solid var(--border); }
+    .bar .wrap { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); min-height: 56px; flex-wrap: wrap; padding-block: var(--s1); }
+    .bar h1 { font-size: 1.15rem; }
+    .acct { display: flex; align-items: center; gap: var(--s2); min-width: 0; }
+    .acct span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    main.wrap { padding-block: var(--s3) var(--s5); } /* .wrap's padding shorthand would otherwise zero the top */
+
+    /* buttons */
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--s1); min-height: 36px;
+      padding: 4px var(--s2); background: transparent; border: 1px solid var(--border); border-radius: 6px;
+      color: var(--fg); text-decoration: none; cursor: pointer; line-height: 1.3; }
+    .btn:hover { background: var(--hover); }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn.primary:hover { filter: brightness(1.1); background: var(--accent); }
+    .btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+    .btn.danger:hover { filter: brightness(1.1); background: var(--danger); }
+    .btn:focus-visible, input:focus-visible, .list:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .link-btn { background: none; border: 0; padding: 0 var(--s1); min-height: 36px; color: var(--accent); cursor: pointer; border-radius: 4px; }
+    .link-btn:hover { background: var(--hover); }
+
+    /* notice */
+    .notice { border: 1px solid var(--border); border-left-width: 4px; border-radius: 6px; background: var(--surface);
+      padding: var(--s2); margin-bottom: var(--s2); display: grid; gap: var(--s1); }
+    .notice.success { border-left-color: var(--accent); background: var(--accent-soft); }
+    .notice.error { border-left-color: var(--danger); }
+    .notice code { display: block; padding: var(--s1); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; overflow-wrap: anywhere; user-select: all; }
+    .notice:focus { outline: none; }
+    .notice .note { color: var(--fg); }
+    .notice.compact { display: flex; align-items: center; gap: var(--s1); padding: var(--s1) var(--s2); }
+    .notice.compact strong { flex: none; }
+    .notice.compact .url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+    .notice.compact .btn { flex: none; }
+    .row { display: flex; gap: var(--s1); flex-wrap: wrap; align-items: center; }
+
+    /* list */
+    .section-head { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; margin-bottom: var(--s2); }
+    .section-head h2 { font-size: 1.1rem; margin-right: auto; }
+    .section-head h2:focus { outline: none; }
+    .toggle { display: inline-flex; align-items: center; gap: var(--s1); min-height: 36px; cursor: pointer; }
+    .toggle input { width: 16px; height: 16px; margin: 0; padding: 0; }
+    .empty { border: 1px dashed var(--border); border-radius: 8px; padding: var(--s4) var(--s2); text-align: center; display: grid; gap: var(--s2); justify-items: center; }
+    .empty h3 { font-size: 1.05rem; }
+
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: var(--s1) var(--s1); border-bottom: 1px solid var(--border); vertical-align: middle; }
+    th { color: var(--muted); font-weight: 500; font-size: .85rem; white-space: nowrap; }
+    td.num, th.num { text-align: right; }
+    td.name { font-weight: 500; overflow-wrap: anywhere; }
+    td.folder a { display: inline-block; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+    td.actions { white-space: nowrap; text-align: right; }
+    td.actions .btn + .btn { margin-left: var(--s1); }
+    tr.dim td:not(.actions) { opacity: .55; }
+    .badge { display: inline-block; margin-left: var(--s1); padding: 0 var(--s1); border-radius: 999px; font-size: .75rem; font-weight: 500; line-height: 20px; border: 1px solid transparent; vertical-align: 1px; }
+    .badge.active { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+    .badge.full { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+    .badge.expired { background: var(--hover); color: var(--muted); border-color: var(--border); }
+    .badge.revoked { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+    @keyframes flash { from { background: var(--accent-soft); } to { background: transparent; } }
+    tr.flash td { animation: flash 3s ease-out; }
+    tr.spacer, tr.spacer td { padding: 0; border: 0; background: none; }
+    tr.spacer td { display: block; }
+    tr.spacer td::before { content: none; }
+
+    /* dialogs */
+    dialog { margin: 8vh auto auto; padding: 0; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); color: var(--fg);
+      box-shadow: var(--shadow); width: min(880px, calc(100vw - 32px)); max-height: calc(92dvh - 16px); overflow: auto; }
+    dialog.narrow { width: min(440px, calc(100vw - 32px)); }
+    dialog::backdrop { background: rgb(1 4 9 / .6); }
+    .dlg { padding: var(--s3); display: grid; gap: var(--s2); }
+    .dlg h2 { font-size: 1.15rem; overflow-wrap: anywhere; }
+    .dlg .actions { display: flex; justify-content: flex-end; gap: var(--s1); flex-wrap: wrap; }
+
+    /* form */
+    .cols { display: grid; grid-template-columns: 3fr 2fr; gap: var(--s3); align-items: start; }
+    .col { display: grid; gap: var(--s2); min-width: 0; }
+    .field { display: grid; gap: 4px; min-width: 0; }
+    .field > .err { margin-top: -4px; }
+    .field > label, .label { font-weight: 500; }
+    input { width: 100%; min-height: 36px; }
+    input[type=checkbox] { width: auto; min-height: 0; }
+    input[aria-invalid=true] { border-color: var(--danger); }
+    .err { color: var(--danger); font-size: .9rem; line-height: 20px; min-height: 20px; }
+    .hint { color: var(--muted); font-size: .85rem; }
+    fieldset.limits { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: var(--s2); margin: 0; display: grid; gap: var(--s2); min-width: 0; }
+    fieldset.limits legend { padding: 0 var(--s1); font-weight: 500; }
+    .suffix { position: relative; }
+    .suffix input { padding-right: 64px; -moz-appearance: textfield; appearance: textfield; }
+    .suffix input::-webkit-outer-spin-button, .suffix input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .suffix span { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+
+    .chip-row { min-height: 32px; display: flex; align-items: center; }
+    .chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 4px 2px 12px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent); }
+    .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chip button { flex: none; width: 28px; height: 28px; min-height: 0; padding: 0; border: 0; border-radius: 50%; background: transparent; color: inherit; font-size: 1.1rem; line-height: 1; }
+    .chip button:hover { background: var(--hover); }
+
+    .picker { display: grid; gap: var(--s1); }
+    .crumbs { display: flex; flex-wrap: nowrap; align-items: center; height: 36px; overflow-x: auto; scrollbar-width: none; }
+    .crumbs > * { flex: none; white-space: nowrap; }
+    .crumbs .sep { color: var(--muted); }
+    .crumbs [aria-current] { padding: 0 var(--s1); font-weight: 500; }
+    .list { position: relative; height: 240px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+    .list [role=listbox] { outline: none; min-height: 100%; }
+    .opt { display: flex; align-items: center; gap: var(--s1); min-height: 36px; padding: 0 var(--s1) 0 var(--s2); cursor: default; user-select: none; border-bottom: 1px solid var(--border); }
+    .opt:last-child { border-bottom: 0; }
+    .opt:hover { background: var(--hover); }
+    .opt[aria-selected=true] { background: var(--hover); }
+    .opt.chosen { box-shadow: inset 3px 0 0 var(--accent); background: var(--accent-soft); }
+    .opt.chosen[aria-selected=true] { background: color-mix(in srgb, var(--accent) 28%, var(--bg)); }
+    .opt .tick { flex: none; color: var(--accent); }
+    .opt .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .opt .go { flex: none; min-width: 36px; min-height: 36px; display: grid; place-items: center; color: var(--muted); background: none; border: 0; padding: 0; cursor: pointer; border-radius: 4px; }
+    .opt .go:hover { color: var(--fg); }
+    .opt svg { flex: none; color: var(--muted); }
+    .list-msg { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: var(--s1); text-align: center; color: var(--muted); padding: var(--s2); pointer-events: none; }
+    .list-msg button { pointer-events: auto; }
+    .pick-row { display: grid; gap: var(--s1); justify-items: end; }
+    .pick-row .hint { justify-self: start; }
+    #pickBtn { max-width: 100%; }
+    #pickBtn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .ico { display: none; }
+    @media (max-width: 480px) {
+      .bar .wrap { flex-direction: column; align-items: stretch; gap: 0; padding-block: var(--s1); }
+      .acct { justify-content: space-between; gap: var(--s1); }
+      .acct span { flex: 1; min-width: 0; }
+      a.btn.logout { width: 36px; padding: 0; flex: none; }
+      a.btn.logout .ico { display: block; }
+      a.btn.logout .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    }
+    @media (max-width: 760px) {
+      dialog { margin-top: var(--s2); max-height: calc(100dvh - 32px); }
+      .cols { grid-template-columns: 1fr; }
+      .dlg { padding: var(--s2); }
+    }
+
+    /* table -> stacked cards */
+    @media (max-width: 720px) {
+      table, tbody, tr, td { display: block; }
+      thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+      tr { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: var(--s1) var(--s2); margin-bottom: var(--s1); }
+      td { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s2); border: 0; padding: 4px 0; text-align: right !important; }
+      td::before { content: attr(data-label); color: var(--muted); text-align: left; flex: none; }
+      td.name { display: block; text-align: left !important; font-size: 1.05rem; padding-bottom: var(--s1); }
+      td.name::before, td.actions::before { content: none; }
+      td.folder a { max-width: 60vw; }
+      td.actions { justify-content: flex-start; padding-top: var(--s1); border-top: 1px solid var(--border); margin-top: var(--s1); }
+      td.actions .btn { flex: 1 1 0; margin: 0 !important; }
+      td.actions { gap: var(--s1); }
+    }
   </style>
 </head>
 <body>
-  <p style="text-align:right"><a href="/auth/logout">Log out</a></p>
-  <h1>New dropbox</h1>
-  <form id="form">
-    <label>Name <input name="name" required></label>
-    <label>Destination folder: <b id="picked">none</b></label>
-    <div class="crumbs" id="crumbs"></div>
-    <div class="row"><select id="folders" size="6" style="min-width:16rem"></select>
-      <button type="button" id="open">Open</button>
-      <button type="button" id="choose">Choose selected</button>
-      <button type="button" id="chooseHere">Choose current</button></div>
-    <label>Password (optional) <input name="password" type="text" autocomplete="off"></label>
-    <div class="row">
-      <label>Expires in (days) <input name="expires_in_days" type="number" value="30" min="1"></label>
-      <label>Onboarding window (hours) <input name="onboard_window_hours" type="number" value="48" min="1"></label>
-      <label>Max devices <input name="max_devices" type="number" value="3" min="1"></label>
+  <header class="bar">
+    <div class="wrap">
+      <h1>Dropbox admin</h1>
+      <div class="acct">
+        <span class="muted" id="who"></span>
+        <a class="btn logout" href="/auth/logout"><svg class="ico" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 2.5H3.5v11H6M10 5l3 3-3 3M13 8H6"/></svg><span class="lbl">Log out</span></a>
+      </div>
     </div>
-    <p><button>Create</button></p>
-  </form>
-  <div id="result" hidden>
-    <textarea id="helper" rows="5" readonly></textarea>
-    <button id="copy">Copy</button>
-  </div>
+  </header>
 
-  <h1>Dropboxes</h1>
-  <table><thead><tr><th>Name</th><th>Expires</th><th>Devices</th><th>Files</th><th></th></tr></thead>
-    <tbody id="list"></tbody></table>
+  <main class="wrap">
+    <div id="notice" role="status" tabindex="-1" hidden></div>
+
+    <section aria-labelledby="listHead">
+      <div class="section-head">
+        <h2 id="listHead" tabindex="-1">Dropboxes</h2>
+        <label class="toggle" id="toggleWrap"><input type="checkbox" id="showRevoked"> Show revoked</label>
+        <button class="btn primary" type="button" id="newBtn">New dropbox</button>
+      </div>
+
+      <p class="muted" id="loading">Loading…</p>
+      <div class="empty" id="empty" hidden>
+        <h3 id="emptyTitle">No dropboxes yet</h3>
+        <p class="muted" id="emptyText">Create an upload link backed by a Google Drive folder.</p>
+        <button class="btn primary" type="button" id="emptyNew">New dropbox</button>
+      </div>
+      <table id="tbl" hidden>
+        <thead><tr>
+          <th scope="col">Name</th><th scope="col">Folder</th><th scope="col">Created</th>
+          <th scope="col">Expires</th><th scope="col" class="num">Devices</th><th scope="col" class="num">Files</th>
+          <th scope="col"><span class="sr">Actions</span></th>
+        </tr></thead>
+        <tbody id="list"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <dialog id="formDlg" aria-labelledby="formTitle">
+    <form id="form" class="dlg" novalidate>
+      <h2 id="formTitle">New dropbox</h2>
+      <div class="cols">
+        <div class="col">
+          <div class="field">
+            <label for="name">Name</label>
+            <input id="name" name="name" autocomplete="off" maxlength="200" aria-describedby="err-name">
+            <p class="err" id="err-name"></p>
+          </div>
+
+          <div class="field" id="destField">
+            <span class="label" id="destLabel">Destination folder</span>
+            <div class="chip-row" id="chipRow"></div>
+            <div class="picker" role="group" aria-labelledby="destLabel">
+              <nav class="crumbs" id="crumbs" aria-label="Folder path"></nav>
+              <input id="filter" type="search" placeholder="Filter folders" aria-label="Filter folders" autocomplete="off">
+              <div class="list">
+                <div id="folderList" role="listbox" tabindex="0" aria-label="Folders" aria-describedby="pickHint"></div>
+                <div class="list-msg" id="folderMsg"></div>
+              </div>
+              <div class="pick-row">
+                <span class="hint" id="pickHint">Click to select, double-click or press Enter to open.</span>
+                <button type="button" class="btn" id="pickBtn"></button>
+              </div>
+            </div>
+            <p class="err" id="err-dest"></p>
+          </div>
+
+          <div class="field">
+            <label for="password">Password (optional)</label>
+            <input id="password" name="password" type="text" autocomplete="off">
+          </div>
+        </div>
+
+        <fieldset class="limits">
+          <legend>Limits</legend>
+          <div class="field">
+            <label for="expires">Expires</label>
+            <div class="suffix"><input id="expires" type="number" inputmode="numeric" value="30" min="1" max="365" aria-describedby="err-expires"><span>days</span></div>
+            <p class="err" id="err-expires"></p>
+          </div>
+          <div class="field">
+            <label for="window">Onboarding window</label>
+            <div class="suffix"><input id="window" type="number" inputmode="numeric" value="48" min="1" max="720" aria-describedby="err-window"><span>hours</span></div>
+            <p class="err" id="err-window"></p>
+          </div>
+          <div class="field">
+            <label for="devices">Max devices</label>
+            <div class="suffix"><input id="devices" type="number" inputmode="numeric" value="3" min="1" max="50" aria-describedby="err-devices"><span>devices</span></div>
+            <p class="err" id="err-devices"></p>
+          </div>
+        </fieldset>
+      </div>
+      <p class="err" id="formError" role="alert"></p>
+      <div class="actions">
+        <button type="button" class="btn" id="formCancel">Cancel</button>
+        <button type="submit" class="btn primary" id="createBtn">Create</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="revokeDlg" class="narrow" aria-labelledby="revokeTitle" aria-describedby="revokeBody">
+    <div class="dlg">
+      <h2 id="revokeTitle"></h2>
+      <p id="revokeBody"></p>
+      <p class="err" id="revokeErr" role="alert" hidden></p>
+      <div class="actions">
+        <button type="button" class="btn" id="revokeCancel" autofocus>Cancel</button>
+        <button type="button" class="btn danger" id="revokeGo">Revoke</button>
+      </div>
+    </div>
+  </dialog>
 
 <script>
 const $ = (id) => document.getElementById(id);
+const el = (tag, attrs = {}, ...kids) => {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) v === false || v == null ? 0 : e.setAttribute(k, v === true ? '' : v);
+  e.append(...kids);
+  return e;
+};
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const errText = (body, fallback) => {
+  const d = body && body.detail;
+  if (Array.isArray(d)) return d.map((x) => `${(x.loc || []).slice(1).join('.')}: ${x.msg}`).join('; ');
+  return d || fallback;
+};
 const api = async (path, opts) => {
   const r = await fetch('/admin/api' + path, opts);
-  if (r.status === 401) location.href = '/auth/google/login';
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  if (r.status === 401) { location.href = '/auth/google/login'; return new Promise(() => {}); }
+  if (!r.ok) throw new Error(errText(await r.json().catch(() => null), r.statusText));
   return r.json();
 };
-let trail = [{ id: 'root', name: 'My Drive' }], folderId = null;
 
-async function browse() {
-  const here = trail[trail.length - 1];
-  $('crumbs').replaceChildren(...trail.map((t, i) => {
-    const b = document.createElement('button'); b.type = 'button'; b.textContent = t.name;
-    b.onclick = () => { trail = trail.slice(0, i + 1); browse(); }; return b;
-  }));
-  const folders = await api('/folders?parent=' + encodeURIComponent(here.id));
-  $('folders').replaceChildren(...folders.map((f) => new Option(f.name, f.id)));
+/* ---------- copy ---------- */
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch {}
+  const t = el('textarea', { readonly: true, style: 'position:fixed;opacity:0' });
+  t.value = text; document.body.append(t); t.select();
+  try { return document.execCommand('copy'); } catch { return false; } finally { t.remove(); }
 }
-function pick(f) { folderId = f.id; $('picked').textContent = f.name; }
-$('open').onclick = () => { const o = $('folders').selectedOptions[0]; if (o) { trail.push({ id: o.value, name: o.text }); browse(); } };
-$('choose').onclick = () => { const o = $('folders').selectedOptions[0]; if (o) pick({ id: o.value, name: o.text }); };
-$('chooseHere').onclick = () => pick(trail[trail.length - 1]);
+function copyButton(label, text, { primary = false, aria } = {}) {
+  const b = el('button', { type: 'button', class: 'btn' + (primary ? ' primary' : '') }, label);
+  if (aria) b.setAttribute('aria-label', aria);
+  let timer;
+  b.onclick = async () => {
+    const ok = await copyText(text);
+    b.textContent = ok ? 'Copied' : 'Copy failed';
+    if (aria) b.setAttribute('aria-label', (ok ? 'Copied: ' : 'Copy failed: ') + aria);
+    clearTimeout(timer);
+    timer = setTimeout(() => { b.textContent = label; if (aria) b.setAttribute('aria-label', aria); }, 2000);
+  };
+  return b;
+}
+
+/* ---------- notice banner ---------- */
+let noticeTimer;
+function dismissNotice() {
+  const n = $('notice');
+  clearTimeout(noticeTimer);
+  const hadFocus = n.contains(document.activeElement);
+  n.hidden = true;
+  if (hadFocus) $('listHead').focus({ preventScroll: true });
+}
+const dismissButton = () => { const b = el('button', { type: 'button', class: 'btn' }, 'Dismiss'); b.onclick = dismissNotice; return b; };
+function notice(kind, kids, actions = []) {
+  clearTimeout(noticeTimer);
+  const n = $('notice');
+  n.className = 'notice ' + kind;
+  n.removeAttribute('aria-live');
+  n.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  n.replaceChildren(...kids, el('div', { class: 'row' }, ...actions, dismissButton()));
+  n.hidden = false;
+  return n;
+}
+function showCreated(out) {
+  const n = notice('success', [
+    el('strong', {}, 'Dropbox created'),
+    el('code', {}, out.url),
+    el('p', { class: 'note' }, 'Note: The invite message includes the password, which is not stored and cannot be shown again.'),
+  ], [copyButton('Copy link', out.url, { primary: true }), copyButton('Copy invite message', out.helper_text)]);
+  noticeTimer = setTimeout(() => collapseCreated(out.url), 20000);
+  n.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+}
+function collapseCreated(url) {
+  const n = $('notice');
+  if (n.hidden || !n.classList.contains('success')) return;
+  n.setAttribute('aria-live', 'off'); // already announced once
+  n.className = 'notice success compact';
+  n.replaceChildren(el('strong', {}, 'Dropbox created'), el('span', { class: 'url' }, url), copyButton('Copy link', url), dismissButton());
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !e.defaultPrevented && !document.querySelector('dialog[open]') && !$('notice').hidden) dismissNotice();
+});
+
+/* ---------- dropbox list ---------- */
+let boxes = [];
+const fmtDate = (iso) => new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+function relative(iso) {
+  const ms = new Date(iso) - Date.now(), abs = Math.abs(ms);
+  if (abs < 6e4) return ms >= 0 ? 'in under a minute' : 'just now';
+  const [n, unit] = abs < 36e5 ? [abs / 6e4, 'minute'] : abs < 864e5 ? [abs / 36e5, 'hour'] : [abs / 864e5, 'day'];
+  const t = plural(Math.round(n), unit);
+  return ms >= 0 ? `in ${t}` : `${t} ago`;
+}
+const STATUS = { active: 'Active', full: 'Full', expired: 'Expired', revoked: 'Revoked' };
+function statusOf(d) {
+  const now = Date.now();
+  if (d.is_revoked) return 'revoked';
+  if (new Date(d.expires_at) < now) return 'expired';
+  const windowOver = new Date(d.created_at).getTime() + d.onboard_window_hours * 36e5 < now;
+  return d.devices >= d.max_devices && windowOver ? 'full' : 'active';
+}
+const rowOf = (id) => [...$('list').children].find((r) => r.dataset.id === id);
+function flashRow(id) {
+  const tr = rowOf(id);
+  if (!tr) return;
+  tr.classList.remove('flash'); void tr.offsetWidth; tr.classList.add('flash');
+  setTimeout(() => tr.classList.remove('flash'), 3000);
+}
+async function animateOut(id) {
+  const tr = rowOf(id);
+  if (!tr || reduceMotion) return;
+  const h = tr.offsetHeight, mb = getComputedStyle(tr).marginBottom;
+  await tr.animate({ opacity: [1, 0] }, { duration: 200, easing: 'ease-out', fill: 'forwards' }).finished;
+  const box = el('div', { style: `height:${h}px` });
+  const spacer = el('tr', { class: 'spacer', 'aria-hidden': 'true', style: `margin-bottom:${mb}` }, el('td', { colspan: '7' }, box));
+  tr.replaceWith(spacer);
+  const opts = { duration: 250, easing: 'ease' };
+  await Promise.all([box.animate({ height: [h + 'px', '0px'] }, opts).finished, spacer.animate({ marginBottom: [mb, '0px'] }, opts).finished]);
+}
+const cell = (cls, label, ...kids) => el('td', { class: cls, 'data-label': label }, ...kids);
+
+function renderList() {
+  const show = $('showRevoked').checked;
+  const visible = boxes.filter((d) => show || !d.is_revoked);
+  $('loading').hidden = true;
+  $('toggleWrap').hidden = !boxes.some((d) => d.is_revoked);
+  $('tbl').hidden = visible.length === 0;
+  $('empty').hidden = visible.length !== 0;
+  if (!boxes.length) {
+    $('emptyTitle').textContent = 'No dropboxes yet';
+    $('emptyText').textContent = 'Create an upload link backed by a Google Drive folder.';
+  } else if (!visible.length) {
+    $('emptyTitle').textContent = 'No active dropboxes';
+    $('emptyText').textContent = `${plural(boxes.length, 'revoked dropbox')} hidden. Turn on “Show revoked” to see ${boxes.length === 1 ? 'it' : 'them'}.`;
+  }
+  $('list').replaceChildren(...visible.map((d) => {
+    const st = statusOf(d);
+    const folder = d.gdrive_folder_path || 'Open in Drive';
+    const dead = st === 'revoked' || st === 'expired';
+    const copy = copyButton('Copy link', d.url, { aria: `Copy link for ${d.name}` });
+    const rv = el('button', { type: 'button', class: 'btn', 'aria-label': `Revoke ${d.name}` }, 'Revoke');
+    if (dead) { copy.disabled = true; copy.title = `This link is ${st}`; }
+    if (d.is_revoked) { rv.disabled = true; rv.title = 'Already revoked'; } else rv.onclick = () => askRevoke(d);
+    const actions = cell('actions', '', copy, rv);
+    return el('tr', { class: dead ? 'dim' : '', 'data-id': d.id },
+      cell('name', 'Name', d.name, el('span', { class: 'badge ' + st }, STATUS[st])),
+      cell('folder', 'Folder', el('a', {
+        href: 'https://drive.google.com/drive/folders/' + encodeURIComponent(d.gdrive_folder_id),
+        target: '_blank', rel: 'noopener', title: folder + ' (opens in Drive)',
+      }, folder)),
+      cell('', 'Created', el('span', { title: new Date(d.created_at).toLocaleString() }, fmtDate(d.created_at))),
+      cell('', 'Expires', el('div', {}, fmtDate(d.expires_at), el('div', { class: 'muted' }, relative(d.expires_at)))),
+      cell('num', 'Devices', `${d.devices}/${d.max_devices}`),
+      cell('num', 'Files', String(d.files)),
+      actions);
+  }));
+}
+async function load() {
+  try { boxes = await api('/dropboxes'); renderList(); }
+  catch (e) { $('loading').hidden = true; notice('error', [el('strong', {}, 'Could not load dropboxes'), el('span', {}, e.message)]); }
+}
+$('showRevoked').onchange = renderList;
+
+/* ---------- dialogs ---------- */
+function closeOnBackdrop(dlg) {
+  let downOnBackdrop = false;
+  dlg.addEventListener('mousedown', (e) => { downOnBackdrop = e.target === dlg; });
+  dlg.addEventListener('click', (e) => { if (e.target === dlg && downOnBackdrop) dlg.close(); });
+}
+
+function trapFocus(dlg) {
+  dlg.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab') return;
+    const f = [...dlg.querySelectorAll('button, a[href], input, select, textarea, [tabindex]')]
+      .filter((x) => !x.disabled && x.tabIndex >= 0 && x.offsetParent !== null);
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1], at = document.activeElement;
+    if (e.shiftKey && (at === first || at === dlg)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && at === last) { e.preventDefault(); first.focus(); }
+  });
+}
+function returnFocus(dlg, fallback) {
+  dlg.addEventListener('close', () => {
+    const o = dlg._opener, usable = o && o.isConnected && o.offsetParent !== null && !o.disabled;
+    const t = usable ? o : fallback && fallback();
+    if (t) t.focus({ preventScroll: true });
+  });
+}
+
+/* revoke */
+let revoking = null;
+function askRevoke(d) {
+  revoking = d;
+  $('revokeTitle').textContent = `Revoke “${d.name}”?`;
+  $('revokeBody').textContent = `The link stops working immediately. ${plural(d.devices, 'device')} and ${plural(d.files, 'file')} are affected. ` +
+    'Uploaded files stay in Google Drive. This can’t be undone.';
+  $('revokeErr').hidden = true;
+  $('revokeGo').disabled = false;
+  $('revokeDlg')._opener = document.activeElement;
+  $('revokeDlg').showModal();
+}
+closeOnBackdrop($('revokeDlg'));
+trapFocus($('revokeDlg'));
+returnFocus($('revokeDlg'));
+$('revokeCancel').onclick = () => $('revokeDlg').close();
+$('revokeGo').onclick = async () => {
+  const d = revoking, btn = $('revokeGo');
+  btn.disabled = true;
+  try {
+    await api(`/dropboxes/${d.id}/revoke`, { method: 'POST' });
+  } catch (e) {
+    $('revokeErr').textContent = 'Could not revoke: ' + e.message; $('revokeErr').hidden = false; btn.disabled = false; return;
+  }
+  $('revokeDlg').close();
+  const listed = $('showRevoked').checked; // otherwise the row leaves the list
+  if (!listed) await animateOut(d.id);
+  await load();
+  const actions = [];
+  if (!listed) {
+    const show = el('button', { type: 'button', class: 'btn' }, 'Show revoked');
+    show.onclick = () => { $('showRevoked').checked = true; renderList(); dismissNotice(); flashRow(d.id); $('showRevoked').focus(); };
+    actions.push(show);
+  }
+  notice('info', [el('span', {}, `Revoked “${d.name}”.`)], actions).focus();
+  if (listed) flashRow(d.id);
+};
+
+/* new dropbox */
+const picker = { trail: [{ id: 'root', name: 'My Drive' }], folders: [], filter: '', active: -1, loading: false, error: null, token: 0, loaded: false };
+let dest = null;
+const here = () => picker.trail[picker.trail.length - 1];
+const pathOf = (extra) => [...picker.trail.map((t) => t.name), ...(extra ? [extra] : [])].join(' / ');
+const FOLDER_SVG = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M1.75 2.5A1.75 1.75 0 0 0 0 4.25v7.5C0 12.72.78 13.5 1.75 13.5h12.5c.97 0 1.75-.78 1.75-1.75v-6.5A1.75 1.75 0 0 0 14.25 3.5H8L6.7 2.2a.75.75 0 0 0-.53-.2z"/></svg>';
+const TICK_SVG = '<svg class="tick" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg>';
+const UP_SVG = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 13V3m0 0L4 7m4-4 4 4"/></svg>';
+
+function pickerRows() {
+  const q = picker.filter.trim().toLowerCase();
+  const items = picker.folders.filter((f) => f.name.toLowerCase().includes(q)).map((f) => ({ kind: 'folder', ...f }));
+  return picker.trail.length > 1 ? [{ kind: 'up' }, ...items] : items;
+}
+function renderCrumbs() {
+  const nodes = [];
+  picker.trail.forEach((t, i) => {
+    if (i) nodes.push(el('span', { class: 'sep', 'aria-hidden': 'true' }, '›'));
+    if (i === picker.trail.length - 1) { nodes.push(el('span', { 'aria-current': 'location' }, t.name)); return; }
+    const b = el('button', { type: 'button', class: 'link-btn' }, t.name);
+    b.onclick = () => { picker.trail = picker.trail.slice(0, i + 1); browse(); $('folderList').focus(); };
+    nodes.push(b);
+  });
+  $('crumbs').replaceChildren(...nodes);
+  $('crumbs').scrollLeft = $('crumbs').scrollWidth;
+}
+function renderFolders() {
+  const rows = pickerRows(), box = $('folderList'), msg = $('folderMsg');
+  box.setAttribute('aria-busy', picker.loading);
+  box.replaceChildren(...(picker.loading || picker.error ? [] : rows).map((r, i) => {
+    const chosen = dest && r.kind === 'folder' && r.id === dest.id;
+    const o = el('div', { role: 'option', id: 'opt-' + i, class: 'opt' + (chosen ? ' chosen' : ''), 'aria-selected': String(i === picker.active) });
+    o.innerHTML = r.kind === 'up' ? UP_SVG : FOLDER_SVG;
+    o.append(el('span', { class: 'nm' }, r.kind === 'up' ? '.. (up one level)' : r.name));
+    if (chosen) {
+      o.insertAdjacentHTML('beforeend', TICK_SVG);
+      o.append(el('span', { class: 'sr' }, '(selected destination)'));
+    }
+    if (r.kind === 'folder') {
+      const go = el('button', { type: 'button', class: 'go', tabindex: '-1', 'aria-label': `Open ${r.name}` }, '›');
+      go.onclick = (e) => { e.stopPropagation(); activate(i); };
+      o.append(go);
+    }
+    o.onclick = () => (r.kind === 'up' ? activate(i) : setActive(i));
+    o.ondblclick = () => activate(i);
+    return o;
+  }));
+  if (picker.active >= 0 && !picker.loading) box.setAttribute('aria-activedescendant', 'opt-' + picker.active);
+  else box.removeAttribute('aria-activedescendant');
+  msg.replaceChildren();
+  if (picker.loading) msg.append('Loading folders…');
+  else if (picker.error) {
+    const retry = el('button', { type: 'button', class: 'btn' }, 'Retry');
+    retry.onclick = browse;
+    msg.append(el('span', {}, 'Could not load folders: ' + picker.error), retry);
+  } else if (!picker.folders.length) msg.append('No subfolders');
+  else if (!rows.some((r) => r.kind === 'folder')) msg.append(`No folders match “${picker.filter.trim()}”`);
+}
+function pickTarget() {
+  const r = pickerRows()[picker.active];
+  return r && r.kind === 'folder' ? { id: r.id, name: r.name, path: pathOf(r.name) } : { id: here().id, name: here().name, path: pathOf() };
+}
+function renderPick() {
+  const t = pickTarget(), chosen = dest && dest.id === t.id;
+  $('pickBtn').replaceChildren(el('span', {}, chosen ? 'Selected' : `Select “${t.name}”`));
+  $('pickBtn').disabled = picker.loading || chosen;
+}
+function setActive(i) {
+  const n = pickerRows().length;
+  picker.active = n ? Math.max(0, Math.min(n - 1, i)) : -1;
+  renderFolders(); renderPick();
+  const o = $('opt-' + picker.active);
+  if (o) o.scrollIntoView({ block: 'nearest' });
+}
+function activate(i) {
+  const r = pickerRows()[i];
+  if (!r) return;
+  if (r.kind === 'up') picker.trail.pop();
+  else picker.trail.push({ id: r.id, name: r.name });
+  browse();
+  $('folderList').focus();
+}
+async function browse() {
+  const t = ++picker.token;
+  Object.assign(picker, { loading: true, error: null, folders: [], active: -1, filter: '', loaded: true });
+  $('filter').value = '';
+  renderCrumbs(); renderFolders(); renderPick();
+  try {
+    const f = await api('/folders?parent=' + encodeURIComponent(here().id));
+    if (t === picker.token) picker.folders = f;
+  } catch (e) {
+    if (t === picker.token) picker.error = e.message;
+  }
+  if (t !== picker.token) return;
+  picker.loading = false;
+  renderFolders(); renderPick();
+}
+$('filter').oninput = (e) => { picker.filter = e.target.value; picker.active = -1; renderFolders(); renderPick(); };
+$('filter').onkeydown = (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); const rows = pickerRows(); const i = picker.active >= 0 ? picker.active : rows.findIndex((r) => r.kind === 'folder'); if (i >= 0) activate(i); }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); $('folderList').focus(); setActive(Math.max(picker.active, 0)); }
+};
+$('folderList').onkeydown = (e) => {
+  const n = pickerRows().length, a = picker.active;
+  const act = {
+    ArrowDown: () => setActive(a + 1), ArrowUp: () => setActive(a < 0 ? n - 1 : a - 1),
+    Home: () => setActive(0), End: () => setActive(n - 1),
+    Enter: () => a >= 0 && activate(a), ArrowRight: () => a >= 0 && pickerRows()[a].kind === 'folder' && activate(a),
+    ArrowLeft: () => picker.trail.length > 1 && (picker.trail.pop(), browse()),
+    Backspace: () => picker.trail.length > 1 && (picker.trail.pop(), browse()),
+  }[e.key];
+  if (act) { e.preventDefault(); act(); }
+};
+$('pickBtn').onclick = () => { const { id, path } = pickTarget(); setDest({ id, path }); $('folderList').focus(); };
+
+function setDest(d) {
+  dest = d;
+  const row = $('chipRow');
+  if (!d) row.replaceChildren(el('span', { class: 'muted' }, 'No folder selected'));
+  else {
+    const x = el('button', { type: 'button', 'aria-label': 'Clear destination folder' }, '×');
+    x.onclick = () => { setDest(null); $('folderList').focus(); };
+    row.replaceChildren(el('span', { class: 'chip', title: d.path }, el('span', {}, d.path), x));
+    fieldError('dest', '');
+  }
+  renderFolders(); renderPick();
+}
+
+/* validation */
+function fieldError(key, text) {
+  const p = $('err-' + key);
+  p.textContent = text;
+  const input = { name: $('name'), expires: $('expires'), window: $('window'), devices: $('devices') }[key];
+  if (input) { if (text) input.setAttribute('aria-invalid', 'true'); else input.removeAttribute('aria-invalid'); }
+}
+const intIn = (id, lo, hi) => { const v = $(id).value.trim(); const n = Number(v); return v !== '' && Number.isInteger(n) && n >= lo && n <= hi ? n : null; };
+function validate() {
+  const checks = [
+    ['name', $('name'), $('name').value.trim() ? '' : 'Name is required.'],
+    ['dest', $('folderList'), dest ? '' : 'Choose a destination folder.'],
+    ['expires', $('expires'), intIn('expires', 1, 365) ? '' : 'Enter a whole number from 1 to 365.'],
+    ['window', $('window'), intIn('window', 1, 720) ? '' : 'Enter a whole number from 1 to 720.'],
+    ['devices', $('devices'), intIn('devices', 1, 50) ? '' : 'Enter a whole number from 1 to 50.'],
+  ];
+  checks.forEach(([k, , msg]) => fieldError(k, msg));
+  const bad = checks.find((c) => c[2]);
+  if (bad) bad[1].focus();
+  return !bad;
+}
+['name', 'expires', 'window', 'devices'].forEach((k) => $(k).addEventListener('input', () => fieldError(k, '')));
+
+function openForm() {
+  $('formError').textContent = '';
+  $('formDlg')._opener = document.activeElement;
+  $('formDlg').showModal();
+  if (!picker.loaded) browse();
+}
+function resetForm() {
+  $('form').reset();
+  ['name', 'dest', 'expires', 'window', 'devices'].forEach((k) => fieldError(k, ''));
+  setDest(null);
+  picker.trail = [{ id: 'root', name: 'My Drive' }];
+  browse();
+}
+$('newBtn').onclick = $('emptyNew').onclick = openForm;
+trapFocus($('formDlg'));
+returnFocus($('formDlg'), () => $('newBtn'));
+$('formCancel').onclick = () => $('formDlg').close();
 
 $('form').onsubmit = async (e) => {
   e.preventDefault();
-  if (!folderId) return alert('Choose a destination folder');
-  const f = new FormData(e.target);
+  $('formError').textContent = '';
+  if (!validate()) return;
+  const btn = $('createBtn');
+  btn.disabled = true; btn.textContent = 'Creating…';
   try {
     const out = await api('/dropboxes', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        name: f.get('name'), gdrive_folder_id: folderId, password: f.get('password') || null,
-        expires_in_days: +f.get('expires_in_days'), onboard_window_hours: +f.get('onboard_window_hours'),
-        max_devices: +f.get('max_devices'),
+        name: $('name').value.trim(), gdrive_folder_id: dest.id, gdrive_folder_path: dest.path,
+        password: $('password').value || null, expires_in_days: intIn('expires', 1, 365),
+        onboard_window_hours: intIn('window', 1, 720), max_devices: intIn('devices', 1, 50),
       }),
     });
-    $('helper').value = out.helper_text; $('result').hidden = false; load();
-  } catch (err) { alert(err.message); }
+    $('formDlg').close();
+    resetForm();
+    await load();
+    showCreated(out);
+    flashRow(out.id);
+    $('newBtn').focus({ preventScroll: true });
+  } catch (err) {
+    $('formError').textContent = 'Could not create dropbox: ' + err.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Create';
+  }
 };
-$('copy').onclick = () => navigator.clipboard.writeText($('helper').value);
 
-async function load() {
-  const rows = await api('/dropboxes');
-  $('list').replaceChildren(...rows.map((d) => {
-    const tr = document.createElement('tr');
-    const state = d.is_revoked ? ' (revoked)' : '';
-    [d.name + state, d.expires_at.slice(0, 10), `${d.devices}/${d.max_devices}`, d.files].forEach((v) => {
-      const td = document.createElement('td'); td.textContent = v; tr.append(td);
-    });
-    const td = document.createElement('td');
-    if (!d.is_revoked) {
-      const b = document.createElement('button'); b.textContent = 'Revoke';
-      b.onclick = async () => { if (confirm('Revoke ' + d.name + '?')) { await api(`/dropboxes/${d.id}/revoke`, { method: 'POST' }); load(); } };
-      td.append(b);
-    }
-    tr.append(td); return tr;
-  }));
-}
-browse(); load();
+setDest(null);
+api('/me').then((m) => { $('who').textContent = m.email; }).catch(() => {});
+load();
 </script>
 </body>
 </html>

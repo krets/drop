@@ -87,6 +87,27 @@ async def get_folder(refresh_token: str, folder_id: str) -> dict:
     return info
 
 
+async def folder_path(refresh_token: str, folder_id: str, max_depth: int = 12) -> str:
+    """'My Drive / a / b' for a folder, walking up its parents. Stops early where Drive denies access."""
+    names, current = [], folder_id
+    for _ in range(max_depth):
+        if not current.replace("-", "").replace("_", "").isalnum():
+            raise ValueError("invalid folder id")
+        try:
+            r = await _api(refresh_token, "GET", f"{API}/files/{current}", params={
+                "fields": "name, parents", "supportsAllDrives": "true"})
+        except DriveError:
+            if not names:
+                raise
+            break
+        info = r.json()
+        names.append(info["name"])
+        if not info.get("parents"):
+            break
+        current = info["parents"][0]
+    return " / ".join(reversed(names))
+
+
 async def rename_file(refresh_token: str, file_id: str, name: str) -> None:
     await _api(refresh_token, "PATCH", f"{API}/files/{file_id}",
                params={"supportsAllDrives": "true"}, json={"name": name})

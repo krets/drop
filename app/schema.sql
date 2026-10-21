@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS dropboxes (
     expires_at           TEXT NOT NULL,
     onboard_window_hours INTEGER NOT NULL DEFAULT 48,
     max_devices          INTEGER NOT NULL DEFAULT 3,
-    is_revoked           INTEGER NOT NULL DEFAULT 0
+    is_revoked           INTEGER NOT NULL DEFAULT 0,
+    gdrive_folder_path   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS device_sessions (
