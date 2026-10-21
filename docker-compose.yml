@@ -1,0 +1,28 @@
+services:
+  caddy:
+    image: caddy:2
+    container_name: caddy_proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+
+  backend:
+    build: ./app
+    container_name: dropbox_backend
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data # SQLite database
+
+volumes:
+  caddy_data:
+  caddy_config:

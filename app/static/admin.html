@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dropbox admin</title>
+  <style>
+    body { font: 16px system-ui, sans-serif; max-width: 52rem; margin: 2rem auto; padding: 0 1rem; }
+    label { display: block; margin: .6rem 0 .2rem; }
+    input, select, button, textarea { font: inherit; padding: .4rem; }
+    textarea { width: 100%; box-sizing: border-box; }
+    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+    td, th { border-bottom: 1px solid #8884; padding: .4rem; text-align: left; }
+    .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+    .crumbs button { margin-right: .25rem; }
+  </style>
+</head>
+<body>
+  <p style="text-align:right"><a href="/auth/logout">Log out</a></p>
+  <h1>New dropbox</h1>
+  <form id="form">
+    <label>Name <input name="name" required></label>
+    <label>Destination folder: <b id="picked">none</b></label>
+    <div class="crumbs" id="crumbs"></div>
+    <div class="row"><select id="folders" size="6" style="min-width:16rem"></select>
+      <button type="button" id="open">Open</button>
+      <button type="button" id="choose">Choose selected</button>
+      <button type="button" id="chooseHere">Choose current</button></div>
+    <label>Password (optional) <input name="password" type="text" autocomplete="off"></label>
+    <div class="row">
+      <label>Expires in (days) <input name="expires_in_days" type="number" value="30" min="1"></label>
+      <label>Onboarding window (hours) <input name="onboard_window_hours" type="number" value="48" min="1"></label>
+      <label>Max devices <input name="max_devices" type="number" value="3" min="1"></label>
+    </div>
+    <p><button>Create</button></p>
+  </form>
+  <div id="result" hidden>
+    <textarea id="helper" rows="5" readonly></textarea>
+    <button id="copy">Copy</button>
+  </div>
+
+  <h1>Dropboxes</h1>
+  <table><thead><tr><th>Name</th><th>Expires</th><th>Devices</th><th>Files</th><th></th></tr></thead>
+    <tbody id="list"></tbody></table>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const api = async (path, opts) => {
+  const r = await fetch('/admin/api' + path, opts);
+  if (r.status === 401) location.href = '/auth/google/login';
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  return r.json();
+};
+let trail = [{ id: 'root', name: 'My Drive' }], folderId = null;
+
+async function browse() {
+  const here = trail[trail.length - 1];
+  $('crumbs').replaceChildren(...trail.map((t, i) => {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = t.name;
+    b.onclick = () => { trail = trail.slice(0, i + 1); browse(); }; return b;
+  }));
+  const folders = await api('/folders?parent=' + encodeURIComponent(here.id));
+  $('folders').replaceChildren(...folders.map((f) => new Option(f.name, f.id)));
+}
+function pick(f) { folderId = f.id; $('picked').textContent = f.name; }
+$('open').onclick = () => { const o = $('folders').selectedOptions[0]; if (o) { trail.push({ id: o.value, name: o.text }); browse(); } };
+$('choose').onclick = () => { const o = $('folders').selectedOptions[0]; if (o) pick({ id: o.value, name: o.text }); };
+$('chooseHere').onclick = () => pick(trail[trail.length - 1]);
+
+$('form').onsubmit = async (e) => {
+  e.preventDefault();
+  if (!folderId) return alert('Choose a destination folder');
+  const f = new FormData(e.target);
+  try {
+    const out = await api('/dropboxes', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: f.get('name'), gdrive_folder_id: folderId, password: f.get('password') || null,
+        expires_in_days: +f.get('expires_in_days'), onboard_window_hours: +f.get('onboard_window_hours'),
+        max_devices: +f.get('max_devices'),
+      }),
+    });
+    $('helper').value = out.helper_text; $('result').hidden = false; load();
+  } catch (err) { alert(err.message); }
+};
+$('copy').onclick = () => navigator.clipboard.writeText($('helper').value);
+
+async function load() {
+  const rows = await api('/dropboxes');
+  $('list').replaceChildren(...rows.map((d) => {
+    const tr = document.createElement('tr');
+    const state = d.is_revoked ? ' (revoked)' : '';
+    [d.name + state, d.expires_at.slice(0, 10), `${d.devices}/${d.max_devices}`, d.files].forEach((v) => {
+      const td = document.createElement('td'); td.textContent = v; tr.append(td);
+    });
+    const td = document.createElement('td');
+    if (!d.is_revoked) {
+      const b = document.createElement('button'); b.textContent = 'Revoke';
+      b.onclick = async () => { if (confirm('Revoke ' + d.name + '?')) { await api(`/dropboxes/${d.id}/revoke`, { method: 'POST' }); load(); } };
+      td.append(b);
+    }
+    tr.append(td); return tr;
+  }));
+}
+browse(); load();
+</script>
+</body>
+</html>

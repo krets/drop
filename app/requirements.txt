@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+python-multipart
+itsdangerous
+bcrypt
+authlib
+httpx
+google-api-python-client
+google-auth
