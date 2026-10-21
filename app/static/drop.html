@@ -13,8 +13,7 @@
     label { display: block; font-weight: 600; margin: 1.25rem 0 .35rem; }
     textarea { width: 100%; box-sizing: border-box; resize: vertical; }
     #msg { min-height: 1.5em; color: var(--danger); }
-    .comment-box { display: flex; gap: .75rem; align-items: center; margin-top: .5rem; }
-    .comment-box span { flex: 1; font-size: .85rem; }
+    .comment-box { display: flex; justify-content: flex-end; margin-top: .5rem; }
 
     #files { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; }
     #files li { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; padding: .6rem .75rem; position: relative; }
@@ -53,12 +52,11 @@
 </head>
 <body>
   <h1 id="title">Upload files</h1>
-  <p class="muted">Files you upload go straight to the owner. You can rename or delete your own uploads below, but you can't view or download anything.</p>
+  <p class="muted">Add your files below, then press Upload.</p>
 
   <label for="comment">Leave a comment <span class="muted">(optional)</span></label>
-  <textarea id="comment" rows="2" maxlength="5000" placeholder="Anything the owner should know"></textarea>
+  <textarea id="comment" rows="2" maxlength="5000" placeholder="Add a note with your upload"></textarea>
   <div class="comment-box">
-    <span class="muted">Saved as its own comment when you upload, or on its own with the button.</span>
     <button id="leave" type="button" disabled>Leave comment</button>
   </div>
 

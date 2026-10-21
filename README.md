@@ -20,6 +20,28 @@ Stack: Traefik (external), FastAPI, SQLite, Uppy.js, Google Drive API v3.
     cp .env.example .env   # fill in
     docker compose up -d --build
 
+## Local development
+
+Compose merges a `docker-compose.override.yml` automatically. It is per-machine and gitignored:
+
+    services:
+      backend:
+        networks: !reset []        # no external Traefik network locally
+        labels: !reset []
+        ports: ["8000:8000"]
+        environment:
+          - BASE_URL=http://localhost:8000
+          - WATCHFILES_FORCE_POLLING=true
+        volumes:
+          - ./app:/srv             # edits show up without a rebuild
+          - ./data:/data
+        command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+    networks: !reset {}
+
+Add `http://localhost:8000/auth/google/callback` to the OAuth client's redirect URIs, then
+`docker compose up -d --build`.
+
 ## Test
 
     docker compose --profile test run --rm --build test
