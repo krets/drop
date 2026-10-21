@@ -1,20 +1,4 @@
 services:
-  caddy:
-    image: caddy:2
-    container_name: caddy_proxy
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      - DOMAIN=${DOMAIN}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - backend
-
   backend:
     build:
       context: ./app
@@ -22,8 +6,24 @@ services:
     container_name: dropbox_backend
     restart: unless-stopped
     env_file: .env
+    networks:
+      - proxy
     volumes:
       - ./data:/data # SQLite database
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.dropbox.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.dropbox.entrypoints=websecure
+      - traefik.http.routers.dropbox.tls=true
+      - traefik.http.services.dropbox.loadbalancer.server.port=8000
+      # Admin UI and Google login are only reachable from the allowlisted IPs
+      - traefik.http.routers.dropbox-admin.rule=Host(`${DOMAIN}`) && (PathPrefix(`/admin`) || PathPrefix(`/auth`))
+      - traefik.http.routers.dropbox-admin.entrypoints=websecure
+      - traefik.http.routers.dropbox-admin.tls=true
+      - traefik.http.routers.dropbox-admin.priority=100
+      - traefik.http.routers.dropbox-admin.middlewares=dropbox-admin-ip
+      - traefik.http.middlewares.dropbox-admin-ip.ipallowlist.sourcerange=91.65.243.119/32,127.0.0.1/32,::1/128
 
   test:
     profiles: [test]
@@ -31,6 +31,6 @@ services:
       context: ./app
       target: test
 
-volumes:
-  caddy_data:
-  caddy_config:
+networks:
+  proxy:
+    external: true

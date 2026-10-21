@@ -2,7 +2,7 @@
 
 A self-hosted, write-only "dropbox" in front of Google Drive. See [docs/dropbox-spec.md](docs/dropbox-spec.md).
 
-Stack: Caddy, FastAPI, SQLite, Uppy.js, Google Drive API v3.
+Stack: Traefik (external), FastAPI, SQLite, Uppy.js, Google Drive API v3.
 
 ## Layout
 
