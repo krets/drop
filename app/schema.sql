@@ -16,7 +16,9 @@ CREATE TABLE IF NOT EXISTS device_sessions (
     id          TEXT PRIMARY KEY,
     dropbox_id  TEXT NOT NULL REFERENCES dropboxes(id),
     created_at  TEXT NOT NULL,
-    is_revoked  INTEGER NOT NULL DEFAULT 0
+    is_revoked  INTEGER NOT NULL DEFAULT 0,
+    user_agent  TEXT,
+    last_seen_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS uploaded_files (

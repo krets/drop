@@ -80,6 +80,21 @@
     tr.spacer td { display: block; }
     tr.spacer td::before { content: none; }
 
+    /* row kebab menu */
+    .menu-wrap { position: relative; display: inline-flex; vertical-align: middle; }
+    td.actions .btn { vertical-align: middle; } /* same alignment as .menu-wrap so the two sit level */
+    td.actions .menu-wrap { margin-left: var(--s1); }
+    .btn.icon { width: 36px; padding: 0; flex: none; }
+    .btn.icon svg, .menu svg { display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 12rem; padding: 4px; text-align: left; white-space: nowrap;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); }
+    .menu button { display: grid; grid-template-columns: 20px 1fr; align-items: center; column-gap: 12px; width: 100%; min-height: 36px;
+      padding: 4px 12px; border: 0; border-radius: 6px; background: none; color: var(--fg); text-align: left; cursor: pointer; }
+    .menu button:hover:not(:disabled), .menu button:focus-visible { background: var(--hover); }
+    .menu button:disabled { opacity: .5; cursor: default; }
+    .menu button.destructive { color: var(--danger); }
+    .menu svg { width: 20px; height: 20px; }
+
     /* dialogs */
     dialog { margin: 8vh auto auto; padding: 0; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); color: var(--fg);
       box-shadow: var(--shadow); width: min(880px, calc(100vw - 32px)); max-height: calc(92dvh - 16px); overflow: auto; }
@@ -88,6 +103,11 @@
     .dlg { padding: var(--s3); display: grid; gap: var(--s2); }
     .dlg h2 { font-size: 1.15rem; overflow-wrap: anywhere; }
     .dlg .actions { display: flex; justify-content: flex-end; gap: var(--s1); flex-wrap: wrap; }
+
+    .dlg h3 { font-size: 1rem; }
+    .dlg form { display: grid; gap: var(--s2); }
+    #manageMsg { min-height: 20px; }
+    td .muted { font-size: .85rem; }
 
     /* form */
     .cols { display: grid; grid-template-columns: 3fr 2fr; gap: var(--s3); align-items: start; }
@@ -139,6 +159,7 @@
     #pickBtn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     .ico { display: none; }
+    @media (max-width: 720px) { td.actions { align-items: center; } td.actions .btn.icon { flex: none; } td.actions .menu-wrap { margin-left: 0; flex: none; } }
     @media (max-width: 480px) {
       .bar .wrap { flex-direction: column; align-items: stretch; gap: 0; padding-block: var(--s1); }
       .acct { justify-content: space-between; gap: var(--s1); }
@@ -281,6 +302,57 @@
     </div>
   </dialog>
 
+  <dialog id="manageDlg" aria-labelledby="manageTitle">
+    <div class="dlg">
+      <h2 id="manageTitle"></h2>
+      <form id="manageForm" novalidate>
+        <div class="field">
+          <label for="mName">Name</label>
+          <input id="mName" maxlength="200" autocomplete="off" aria-describedby="err-mName">
+          <p class="err" id="err-mName"></p>
+        </div>
+        <fieldset class="limits">
+          <legend>Limits</legend>
+          <div class="field">
+            <label for="mExpires">Extend expiry</label>
+            <p class="hint" id="mExpiresHint"></p>
+            <div class="suffix"><input id="mExpires" type="number" inputmode="numeric" min="1" max="365" placeholder="No change" aria-describedby="mExpiresHint err-mExpires"><span>days</span></div>
+            <p class="err" id="err-mExpires"></p>
+          </div>
+          <div class="field">
+            <label for="mWindow">Extend onboarding</label>
+            <p class="hint" id="mWindowHint"></p>
+            <div class="suffix"><input id="mWindow" type="number" inputmode="numeric" min="1" max="720" placeholder="No change" aria-describedby="mWindowHint err-mWindow"><span>hours</span></div>
+            <p class="err" id="err-mWindow"></p>
+          </div>
+          <div class="field">
+            <label for="mDevices">Max devices</label>
+            <p class="hint" id="mDevicesHint"></p>
+            <div class="suffix"><input id="mDevices" type="number" inputmode="numeric" min="1" max="50" aria-describedby="mDevicesHint err-mDevices"><span>devices</span></div>
+            <p class="err" id="err-mDevices"></p>
+          </div>
+        </fieldset>
+        <div class="row">
+          <button type="submit" class="btn primary" id="manageApply">Save changes</button>
+          <span class="hint" id="manageMsg" role="status"></span>
+        </div>
+      </form>
+
+      <h3>Devices</h3>
+      <p class="muted" id="devLoading">Loading…</p>
+      <p class="muted" id="devEmpty" hidden>No devices yet.</p>
+      <table id="devTbl" hidden>
+        <thead><tr>
+          <th scope="col">Device</th><th scope="col">First seen</th><th scope="col">Last active</th>
+          <th scope="col" class="num">Uploads</th><th scope="col"><span class="sr">Actions</span></th>
+        </tr></thead>
+        <tbody id="devList"></tbody>
+      </table>
+      <p class="err" id="devErr" role="alert" hidden></p>
+      <div class="actions"><button type="button" class="btn" id="manageClose">Close</button></div>
+    </div>
+  </dialog>
+
 <script>
 const $ = (id) => document.getElementById(id);
 const el = (tag, attrs = {}, ...kids) => {
@@ -311,16 +383,21 @@ async function copyText(text) {
   t.value = text; document.body.append(t); t.select();
   try { return document.execCommand('copy'); } catch { return false; } finally { t.remove(); }
 }
-function copyButton(label, text, { primary = false, aria } = {}) {
-  const b = el('button', { type: 'button', class: 'btn' + (primary ? ' primary' : '') }, label);
+function copyButton(label, text, { primary = false, aria, icon = false } = {}) {
+  const b = el('button', { type: 'button', class: 'btn' + (primary ? ' primary' : '') + (icon ? ' icon' : '') });
+  // icon buttons swap the glyph (and tooltip); text buttons swap the label
+  const show = (glyph, words) => {
+    if (icon) { b.replaceChildren(svgIcon(glyph, 20)); b.title = words; } else b.textContent = words;
+  };
+  show('copy', label);
   if (aria) b.setAttribute('aria-label', aria);
   let timer;
   b.onclick = async () => {
     const ok = await copyText(text);
-    b.textContent = ok ? 'Copied' : 'Copy failed';
+    show(ok ? 'check' : 'x', ok ? 'Copied' : 'Copy failed');
     if (aria) b.setAttribute('aria-label', (ok ? 'Copied: ' : 'Copy failed: ') + aria);
     clearTimeout(timer);
-    timer = setTimeout(() => { b.textContent = label; if (aria) b.setAttribute('aria-label', aria); }, 2000);
+    timer = setTimeout(() => { show('copy', label); if (aria) b.setAttribute('aria-label', aria); }, 2000);
   };
   return b;
 }
@@ -401,9 +478,74 @@ async function animateOut(id) {
   const opts = { duration: 250, easing: 'ease' };
   await Promise.all([box.animate({ height: [h + 'px', '0px'] }, opts).finished, spacer.animate({ marginBottom: [mb, '0px'] }, opts).finished]);
 }
+const MENU_ICONS = {
+  copy: '<rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  more: '<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>',
+  manage: '<path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/>',
+  revoke: '<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',
+};
+function svgIcon(name, size) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  if (size) { svg.setAttribute('width', size); svg.setAttribute('height', size); }
+  svg.innerHTML = MENU_ICONS[name]; // static markup above, never user data
+  return svg;
+}
+
+let openMenu = null;
+function closeMenu(refocus = false) {
+  if (!openMenu) return;
+  const { button, menu } = openMenu;
+  menu.hidden = true;
+  button.setAttribute('aria-expanded', 'false');
+  openMenu = null;
+  if (refocus) button.focus();
+}
+document.addEventListener('click', (e) => { if (openMenu && !openMenu.wrap.contains(e.target)) closeMenu(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && openMenu) { e.preventDefault(); closeMenu(true); }
+});
+
+// items: [{ icon, label, onclick(openerButton), disabled?, title?, danger? }]
+function kebab(label, items, allDisabled = false) {
+  const button = el('button', { type: 'button', class: 'btn icon', 'aria-label': label, 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'data-kebab': '' });
+  button.append(svgIcon('more', 20));
+  const menu = el('div', { class: 'menu', role: 'menu', hidden: true });
+  const wrap = el('span', { class: 'menu-wrap' }, button, menu);
+  menu.append(...items.map((it) => {
+    const b = el('button', { type: 'button', role: 'menuitem', class: it.danger ? 'destructive' : '' });
+    b.append(svgIcon(it.icon), it.label);
+    if (it.disabled) { b.disabled = true; b.title = it.title || ''; }
+    b.onclick = () => { closeMenu(); it.onclick(button); };
+    return b;
+  }));
+  if (allDisabled) { button.disabled = true; button.title = 'Nothing to do for a revoked dropbox'; }
+  button.onclick = () => {
+    const wasOpen = openMenu && openMenu.menu === menu;
+    closeMenu();
+    if (wasOpen) return;
+    menu.hidden = false;
+    button.setAttribute('aria-expanded', 'true');
+    openMenu = { wrap, button, menu };
+    menu.querySelector('button:not(:disabled)')?.focus();
+  };
+  menu.onkeydown = (e) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    const btns = [...menu.querySelectorAll('button:not(:disabled)')];
+    if (!btns.length) return;
+    btns[(btns.indexOf(document.activeElement) + (e.key === 'ArrowDown' ? 1 : -1) + btns.length) % btns.length].focus();
+  };
+  wrap.addEventListener('focusout', (e) => { if (!wrap.contains(e.relatedTarget)) closeMenu(); });
+  return wrap;
+}
 const cell = (cls, label, ...kids) => el('td', { class: cls, 'data-label': label }, ...kids);
 
 function renderList() {
+  closeMenu();
   const show = $('showRevoked').checked;
   const visible = boxes.filter((d) => show || !d.is_revoked);
   $('loading').hidden = true;
@@ -421,11 +563,12 @@ function renderList() {
     const st = statusOf(d);
     const folder = d.gdrive_folder_path || 'Open in Drive';
     const dead = st === 'revoked' || st === 'expired';
-    const copy = copyButton('Copy link', d.url, { aria: `Copy link for ${d.name}` });
-    const rv = el('button', { type: 'button', class: 'btn', 'aria-label': `Revoke ${d.name}` }, 'Revoke');
+    const copy = copyButton('Copy link', d.url, { aria: `Copy link for ${d.name}`, icon: true });
     if (dead) { copy.disabled = true; copy.title = `This link is ${st}`; }
-    if (d.is_revoked) { rv.disabled = true; rv.title = 'Already revoked'; } else rv.onclick = () => askRevoke(d);
-    const actions = cell('actions', '', copy, rv);
+    const actions = cell('actions', '', copy, kebab(`More actions for ${d.name}`, [
+      { icon: 'manage', label: 'Manage', onclick: (opener) => openManage(d, opener), disabled: d.is_revoked, title: 'Revoked dropboxes can’t be managed' },
+      { icon: 'revoke', label: 'Revoke', onclick: (opener) => askRevoke(d, opener), disabled: d.is_revoked, title: 'Already revoked', danger: true },
+    ], d.is_revoked));
     return el('tr', { class: dead ? 'dim' : '', 'data-id': d.id },
       cell('name', 'Name', d.name, el('span', { class: 'badge ' + st }, STATUS[st])),
       cell('folder', 'Folder', el('a', {
@@ -473,14 +616,14 @@ function returnFocus(dlg, fallback) {
 
 /* revoke */
 let revoking = null;
-function askRevoke(d) {
+function askRevoke(d, opener) {
   revoking = d;
   $('revokeTitle').textContent = `Revoke “${d.name}”?`;
   $('revokeBody').textContent = `The link stops working immediately. ${plural(d.devices, 'device')} and ${plural(d.files, 'file')} are affected. ` +
     'Uploaded files stay in Google Drive. This can’t be undone.';
   $('revokeErr').hidden = true;
   $('revokeGo').disabled = false;
-  $('revokeDlg')._opener = document.activeElement;
+  $('revokeDlg')._opener = opener || document.activeElement;
   $('revokeDlg').showModal();
 }
 closeOnBackdrop($('revokeDlg'));
@@ -705,6 +848,130 @@ $('form').onsubmit = async (e) => {
     btn.disabled = false; btn.textContent = 'Create';
   }
 };
+
+/* manage: limits + devices */
+const fmtDateTime = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+function deviceLabel(ua) {
+  if (!ua) return 'Unknown device';
+  const browser = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Firefox\//.test(ua) ? 'Firefox'
+    : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : null;
+  const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Windows'
+    : /Mac OS X/.test(ua) ? 'macOS' : /CrOS/.test(ua) ? 'ChromeOS' : /Linux/.test(ua) ? 'Linux' : null;
+  return browser && os ? `${browser} on ${os}` : browser || os || 'Unknown device';
+}
+const managed = () => boxes.find((b) => b.id === managing);
+let managing = null;
+
+function manageHints(d) {
+  $('mExpiresHint').textContent = `Expires ${fmtDate(d.expires_at)} (${relative(d.expires_at)}). Adds to the current date.`;
+  const open = new Date(d.onboard_ends_at) > Date.now();
+  $('mWindowHint').textContent = open
+    ? `New devices can join until ${fmtDateTime(d.onboard_ends_at)} (${relative(d.onboard_ends_at)}). Adds to that.`
+    : `Onboarding closed ${relative(d.onboard_ends_at)}. Extending reopens it from now.`;
+  $('mDevicesHint').textContent = `${d.devices} of ${d.max_devices} in use.`;
+}
+const manageMsg = (text, bad = false) => { $('manageMsg').textContent = text; $('manageMsg').style.color = bad ? 'var(--danger)' : ''; };
+function manageErr(key, text) {
+  $('err-' + key).textContent = text;
+  const i = $(key);
+  if (text) i.setAttribute('aria-invalid', 'true'); else i.removeAttribute('aria-invalid');
+}
+// blank = leave alone (null); anything else must be a whole number in range (undefined = invalid)
+function optInt(id, lo, hi) {
+  const v = $(id).value.trim();
+  if (v === '') return null;
+  const n = Number(v);
+  return Number.isInteger(n) && n >= lo && n <= hi ? n : undefined;
+}
+
+function openManage(d, opener) {
+  managing = d.id;
+  $('manageTitle').textContent = `Manage “${d.name}”`;
+  $('mName').value = d.name; manageErr('mName', '');
+  ['mExpires', 'mWindow'].forEach((k) => { $(k).value = ''; manageErr(k, ''); });
+  $('mDevices').value = d.max_devices; manageErr('mDevices', '');
+  manageMsg('');
+  manageHints(d);
+  $('devErr').hidden = true;
+  $('manageDlg')._opener = opener || document.activeElement;
+  $('manageDlg').showModal();
+  loadDevices();
+}
+
+async function loadDevices() {
+  const id = managing;
+  $('devLoading').hidden = false; $('devTbl').hidden = true; $('devEmpty').hidden = true; $('devErr').hidden = true;
+  let list;
+  try { list = await api(`/dropboxes/${id}/devices`); }
+  catch (e) { $('devLoading').hidden = true; $('devErr').textContent = 'Could not load devices: ' + e.message; $('devErr').hidden = false; return; }
+  if (id !== managing) return;
+  $('devLoading').hidden = true;
+  $('devEmpty').hidden = list.length > 0;
+  $('devTbl').hidden = list.length === 0;
+  $('devList').replaceChildren(...list.map((v, i) => {
+    const btn = el('button', { type: 'button', class: 'btn', 'aria-label': `Revoke device ${i + 1}, ${deviceLabel(v.user_agent)}` }, 'Revoke');
+    if (v.is_revoked) { btn.disabled = true; btn.textContent = 'Revoked'; btn.removeAttribute('aria-label'); }
+    else {
+      let timer;
+      const disarm = () => { clearTimeout(timer); btn.dataset.armed = ''; btn.textContent = 'Revoke'; btn.classList.remove('danger'); };
+      btn.onclick = async () => {
+        if (btn.dataset.armed !== '1') { // first click arms, second confirms
+          btn.dataset.armed = '1'; btn.textContent = 'Confirm revoke'; btn.classList.add('danger');
+          timer = setTimeout(disarm, 4000);
+          return;
+        }
+        clearTimeout(timer); btn.disabled = true;
+        try {
+          await api(`/dropboxes/${id}/devices/${v.ref}/revoke`, { method: 'POST' });
+          await load(); manageHints(managed()); await loadDevices();
+          manageMsg('Device revoked.');
+        } catch (e) { $('devErr').textContent = 'Could not revoke: ' + e.message; $('devErr').hidden = false; disarm(); btn.disabled = false; }
+      };
+    }
+    return el('tr', { class: v.is_revoked ? 'dim' : '' },
+      cell('name', 'Device', deviceLabel(v.user_agent), el('div', { class: 'muted', title: v.user_agent || '' }, `#${i + 1}${v.is_revoked ? ' · revoked' : ''}`)),
+      cell('', 'First seen', el('span', { title: fmtDateTime(v.created_at) }, fmtDate(v.created_at))),
+      cell('', 'Last active', v.last_seen_at ? el('span', { title: fmtDateTime(v.last_seen_at) }, relative(v.last_seen_at)) : '—'),
+      cell('num', 'Uploads', String(v.files), v.comments ? el('div', { class: 'muted' }, plural(v.comments, 'comment')) : ''),
+      cell('actions', '', btn));
+  }));
+}
+
+$('manageForm').onsubmit = async (e) => {
+  e.preventDefault();
+  manageMsg('');
+  const name = $('mName').value.trim();
+  manageErr('mName', name ? '' : 'Name is required.');
+  const days = optInt('mExpires', 1, 365), hours = optInt('mWindow', 1, 720), devices = optInt('mDevices', 1, 50);
+  manageErr('mExpires', days === undefined ? 'Enter a whole number from 1 to 365, or leave blank.' : '');
+  manageErr('mWindow', hours === undefined ? 'Enter a whole number from 1 to 720, or leave blank.' : '');
+  manageErr('mDevices', devices == null ? 'Enter a whole number from 1 to 50.' : '');
+  const bad = [['mName', name || undefined], ['mExpires', days], ['mWindow', hours], ['mDevices', devices ?? undefined]].find(([, v]) => v === undefined);
+  if (bad) return $(bad[0]).focus();
+  const d = managed(), body = {};
+  if (name !== d.name) body.name = name;
+  if (days) body.extend_expiry_days = days;
+  if (hours) body.extend_onboarding_hours = hours;
+  if (devices !== d.max_devices) body.max_devices = devices;
+  if (!Object.keys(body).length) return manageMsg('Nothing to change.');
+  const btn = $('manageApply');
+  btn.disabled = true;
+  try {
+    await api(`/dropboxes/${d.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    await load();
+    const fresh = managed();
+    $('mName').value = fresh.name; $('manageTitle').textContent = `Manage “${fresh.name}”`;
+    $('mExpires').value = ''; $('mWindow').value = ''; $('mDevices').value = fresh.max_devices;
+    manageHints(fresh);
+    manageMsg('Saved.');
+  } catch (err) { manageMsg('Could not save: ' + err.message, true); }
+  finally { btn.disabled = false; }
+};
+['mName', 'mExpires', 'mWindow', 'mDevices'].forEach((k) => $(k).addEventListener('input', () => manageErr(k, '')));
+closeOnBackdrop($('manageDlg'));
+trapFocus($('manageDlg'));
+returnFocus($('manageDlg'), () => rowOf(managing)?.querySelector('[data-kebab]') || $('newBtn'));
+$('manageClose').onclick = () => $('manageDlg').close();
 
 setDest(null);
 api('/me').then((m) => { $('who').textContent = m.email; }).catch(() => {});

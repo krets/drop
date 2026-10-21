@@ -1,12 +1,15 @@
 import asyncio
+import hashlib
+import math
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import Annotated
 
 import bcrypt
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 import config
 from db import get_db
@@ -118,7 +121,9 @@ async def list_dropboxes(admin=Depends(require_admin), db=Depends(get_db)):
         " (SELECT COUNT(*) FROM uploaded_files f WHERE f.dropbox_id = d.id AND f.status = 'completed') AS files"
         " FROM dropboxes d ORDER BY d.created_at DESC"
     ).fetchall()
-    out = [{**dict(r), "url": f"{config.BASE_URL}/drop/{r['id']}"} for r in rows]
+    out = [{**dict(r), "url": f"{config.BASE_URL}/drop/{r['id']}",
+            "onboard_ends_at": (datetime.fromisoformat(r["created_at"])
+                                + timedelta(hours=r["onboard_window_hours"])).isoformat()} for r in rows]
     # dropboxes created before the path was stored: look it up once and cache it
     legacy = [d for d in out if d["gdrive_folder_path"] is None]
     paths = await asyncio.gather(*(_resolve_path(admin["refresh_token"], d["gdrive_folder_id"]) for d in legacy))
@@ -139,4 +144,71 @@ def revoke_dropbox(dropbox_id: str, _=Depends(require_admin), db=Depends(get_db)
     return {"ok": True}
 
 
-# TODO: revoke individual device sessions.
+
+class Adjust(BaseModel):
+    """Extensions add to the current end (or to now, if it has already passed); max_devices is absolute."""
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)] | None = None
+    extend_expiry_days: int | None = Field(None, ge=1, le=365)
+    extend_onboarding_hours: int | None = Field(None, ge=1, le=24 * 30)
+    max_devices: int | None = Field(None, ge=1, le=50)
+
+    @model_validator(mode="after")
+    def _something(self):
+        if all(v is None for v in (self.name, self.extend_expiry_days, self.extend_onboarding_hours, self.max_devices)):
+            raise ValueError("nothing to change")
+        return self
+
+
+@router.patch("/api/dropboxes/{dropbox_id}")
+def adjust_dropbox(dropbox_id: str, body: Adjust, _=Depends(require_admin), db=Depends(get_db)):
+    box = db.execute("SELECT * FROM dropboxes WHERE id = ?", (dropbox_id,)).fetchone()
+    if box is None:
+        raise HTTPException(404)
+    if box["is_revoked"]:
+        raise HTTPException(409, "This dropbox is revoked")
+    now = utcnow()
+    name, expires_at = body.name or box["name"], box["expires_at"]
+    hours, devices = box["onboard_window_hours"], box["max_devices"]
+    if body.extend_expiry_days:
+        expires_at = (max(datetime.fromisoformat(expires_at), now) + timedelta(days=body.extend_expiry_days)).isoformat()
+    if body.extend_onboarding_hours:
+        created = datetime.fromisoformat(box["created_at"])
+        new_end = max(created + timedelta(hours=hours), now) + timedelta(hours=body.extend_onboarding_hours)
+        hours = math.ceil((new_end - created).total_seconds() / 3600)  # stored as hours since creation
+    if body.max_devices:
+        devices = body.max_devices
+    db.execute("UPDATE dropboxes SET name = ?, expires_at = ?, onboard_window_hours = ?, max_devices = ? WHERE id = ?",
+               (name, expires_at, hours, devices, dropbox_id))
+    db.commit()
+    return {"id": dropbox_id, "name": name, "expires_at": expires_at, "onboard_window_hours": hours,
+            "max_devices": devices}
+
+
+def _device_ref(session_id: str) -> str:
+    """Public handle for a device. The session id itself is the device's login cookie, so never expose it."""
+    return hashlib.sha256(session_id.encode()).hexdigest()[:16]
+
+
+@router.get("/api/dropboxes/{dropbox_id}/devices")
+def list_devices(dropbox_id: str, _=Depends(require_admin), db=Depends(get_db)):
+    if db.execute("SELECT 1 FROM dropboxes WHERE id = ?", (dropbox_id,)).fetchone() is None:
+        raise HTTPException(404)
+    rows = db.execute(
+        "SELECT s.id, s.created_at, s.last_seen_at, s.user_agent, s.is_revoked,"
+        " (SELECT COUNT(*) FROM uploaded_files f WHERE f.session_id = s.id AND f.status = 'completed') AS files,"
+        " (SELECT COUNT(*) FROM comments c WHERE c.session_id = s.id) AS comments"
+        " FROM device_sessions s WHERE s.dropbox_id = ? ORDER BY s.created_at",
+        (dropbox_id,),
+    ).fetchall()
+    return [{"ref": _device_ref(r["id"]), **{k: r[k] for k in r.keys() if k != "id"}} for r in rows]
+
+
+@router.post("/api/dropboxes/{dropbox_id}/devices/{ref}/revoke")
+def revoke_device(dropbox_id: str, ref: str, _=Depends(require_admin), db=Depends(get_db)):
+    ids = [r["id"] for r in db.execute("SELECT id FROM device_sessions WHERE dropbox_id = ?", (dropbox_id,))]
+    match = next((i for i in ids if _device_ref(i) == ref), None)
+    if match is None:
+        raise HTTPException(404)
+    db.execute("UPDATE device_sessions SET is_revoked = 1 WHERE id = ?", (match,))
+    db.commit()
+    return {"ok": True}

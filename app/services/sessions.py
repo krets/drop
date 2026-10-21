@@ -14,6 +14,9 @@ def _ts(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
+SEEN_EVERY = timedelta(minutes=5)
+
+
 class AccessDenied(Exception):
     pass
 
@@ -35,15 +38,22 @@ def session_context(db: sqlite3.Connection, cookie: str | None) -> sqlite3.Row |
     if not cookie:
         return None
     row = db.execute(
-        "SELECT d.*, s.id AS session_id FROM device_sessions s JOIN dropboxes d ON d.id = s.dropbox_id"
-        " WHERE s.id = ? AND s.is_revoked = 0",
+        "SELECT d.*, s.id AS session_id, s.last_seen_at FROM device_sessions s"
+        " JOIN dropboxes d ON d.id = s.dropbox_id WHERE s.id = ? AND s.is_revoked = 0",
         (cookie,),
     ).fetchone()
-    return row if row and _is_live(row) else None
+    if not row or not _is_live(row):
+        return None
+    now = utcnow()
+    if not row["last_seen_at"] or _ts(row["last_seen_at"]) < now - SEEN_EVERY:  # at most one write per interval
+        db.execute("UPDATE device_sessions SET last_seen_at = ? WHERE id = ?", (now.isoformat(), cookie))
+        db.commit()
+    return row
 
 
 def authorize(
-    db: sqlite3.Connection, dropbox_id: str, cookie: str | None, password: str | None = None
+    db: sqlite3.Connection, dropbox_id: str, cookie: str | None, password: str | None = None,
+    user_agent: str | None = None,
 ) -> tuple[sqlite3.Row, str, bool]:
     """Return (dropbox, session_id, is_new_session) or raise AccessDenied.
 
@@ -71,9 +81,10 @@ def authorize(
     # count and insert in one statement so concurrent visitors can't exceed the cap
     session_id = str(uuid.uuid4())
     cur = db.execute(
-        "INSERT INTO device_sessions (id, dropbox_id, created_at) SELECT ?, ?, ?"
+        "INSERT INTO device_sessions (id, dropbox_id, created_at, last_seen_at, user_agent) SELECT ?, ?, ?, ?, ?"
         " WHERE (SELECT COUNT(*) FROM device_sessions WHERE dropbox_id = ? AND is_revoked = 0) < ?",
-        (session_id, dropbox_id, utcnow().isoformat(), dropbox_id, box["max_devices"]),
+        (session_id, dropbox_id, utcnow().isoformat(), utcnow().isoformat(), (user_agent or "")[:300] or None,
+         dropbox_id, box["max_devices"]),
     )
     if cur.rowcount == 0:
         raise AccessDenied

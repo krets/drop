@@ -49,9 +49,9 @@ def refresh_token_for(db, ctx) -> str:
 
 
 @router.get("/drop/{dropbox_id}")
-def drop_page(dropbox_id: str, device_session: str | None = Cookie(None), db=Depends(get_db)):
+def drop_page(dropbox_id: str, request: Request, device_session: str | None = Cookie(None), db=Depends(get_db)):
     try:
-        _, session_id, is_new = authorize(db, dropbox_id, device_session)
+        _, session_id, is_new = authorize(db, dropbox_id, device_session, user_agent=request.headers.get("user-agent"))
     except PasswordRequired:
         return FileResponse("static/password.html")
     except AccessDenied:
@@ -73,7 +73,8 @@ def unlock(dropbox_id: str, body: Unlock, request: Request, device_session: str 
     if unlock_throttle.blocked(key):
         raise HTTPException(429, "Too many attempts; try again later")
     try:
-        _, session_id, is_new = authorize(db, dropbox_id, device_session, body.password)
+        _, session_id, is_new = authorize(
+            db, dropbox_id, device_session, body.password, user_agent=request.headers.get("user-agent"))
     except PasswordRequired:
         raise HTTPException(400)
     except WrongPassword:
