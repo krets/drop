@@ -38,6 +38,7 @@ async def callback(request: Request, db=Depends(get_db)):
         "UPDATE admins SET google_id = ?, refresh_token = COALESCE(?, refresh_token) WHERE email = ?",
         (info["sub"], token.get("refresh_token"), email),
     )
+    db.commit()
     request.session.clear()
     request.session["admin_email"] = email
     return RedirectResponse("/admin/")

@@ -3,7 +3,7 @@ from datetime import timedelta
 
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 import config
@@ -22,26 +22,27 @@ def require_admin(request: Request, db=Depends(get_db)):
     return admin
 
 
-def _drive(admin):
+def _token(admin) -> str:
     if not admin["refresh_token"]:
         raise HTTPException(409, "No Drive token stored; log in again")
-    return gdrive.drive_client(admin["refresh_token"])
+    return admin["refresh_token"]
 
 
 @router.get("/")
 def page(request: Request):
     if not request.session.get("admin_email"):
-        from fastapi.responses import RedirectResponse
         return RedirectResponse("/auth/google/login")
     return FileResponse("static/admin.html")
 
 
 @router.get("/api/folders")
-def folders(parent: str = "root", admin=Depends(require_admin)):
+async def folders(parent: str = "root", admin=Depends(require_admin)):
     try:
-        return gdrive.list_folders(_drive(admin), parent)
+        return await gdrive.list_folders(_token(admin), parent)
     except ValueError:
         raise HTTPException(400, "Invalid folder id")
+    except gdrive.DriveError:
+        raise HTTPException(502, "Google Drive error")
 
 
 class DropboxIn(BaseModel):
@@ -65,24 +66,23 @@ def helper_text(dropbox_id: str, password: str | None, days: int, hours: int, de
 
 
 @router.post("/api/dropboxes", status_code=201)
-def create_dropbox(body: DropboxIn, admin=Depends(require_admin), db=Depends(get_db)):
+async def create_dropbox(body: DropboxIn, admin=Depends(require_admin), db=Depends(get_db)):
     try:
-        gdrive.get_folder(_drive(admin), body.gdrive_folder_id)  # must exist and be reachable
-    except HTTPException:
-        raise
-    except Exception:
+        await gdrive.get_folder(_token(admin), body.gdrive_folder_id)  # must exist and be a folder
+    except gdrive.DriveError:
         raise HTTPException(400, "Folder not found or not accessible")
 
     now = utcnow()
     dropbox_id = str(uuid.uuid4())
     pw_hash = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode() if body.password else None
     db.execute(
-        "INSERT INTO dropboxes (id, gdrive_folder_id, name, password_hash, created_at, expires_at,"
-        " onboard_window_hours, max_devices) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (dropbox_id, body.gdrive_folder_id, body.name, pw_hash, now.isoformat(),
+        "INSERT INTO dropboxes (id, gdrive_folder_id, name, password_hash, created_by, created_at,"
+        " expires_at, onboard_window_hours, max_devices) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (dropbox_id, body.gdrive_folder_id, body.name, pw_hash, admin["email"], now.isoformat(),
          (now + timedelta(days=body.expires_in_days)).isoformat(),
          body.onboard_window_hours, body.max_devices),
     )
+    db.commit()
     return {
         "id": dropbox_id,
         "url": f"{config.BASE_URL}/drop/{dropbox_id}",
@@ -108,6 +108,7 @@ def revoke_dropbox(dropbox_id: str, _=Depends(require_admin), db=Depends(get_db)
     cur = db.execute("UPDATE dropboxes SET is_revoked = 1 WHERE id = ?", (dropbox_id,))
     if cur.rowcount == 0:
         raise HTTPException(404)
+    db.commit()
     return {"ok": True}
 
 

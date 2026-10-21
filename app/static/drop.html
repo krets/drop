@@ -4,9 +4,330 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Upload files</title>
-  <!-- TODO: Uppy dashboard, comment field, "my files" list with rename/delete. -->
+  <link rel="stylesheet" href="/static/theme.css">
+  <link rel="stylesheet" href="/static/vendor/uppy.min.css">
+  <style>
+    body { max-width: 46rem; margin: 1.5rem auto; padding: 0 1rem 4rem; }
+    h1 { margin-bottom: .25rem; }
+    label { display: block; font-weight: 600; margin: 1.25rem 0 .35rem; }
+    textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+    #msg { min-height: 1.5em; color: var(--danger); }
+    .comment-box { display: flex; gap: .75rem; align-items: center; margin-top: .5rem; }
+    .comment-box span { flex: 1; font-size: .85rem; }
+
+    #files { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; }
+    #files li { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; padding: .6rem .75rem; position: relative; }
+    #files li + li { border-top: 1px solid var(--border); }
+    #files li:first-child { border-radius: 8px 8px 0 0; }
+    #files li:last-child { border-radius: 0 0 8px 8px; }
+    #files li:only-child { border-radius: 8px; }
+    /* comments are not uploads: tinted, with an accent bar, and the text itself is the title */
+    #files li.comment { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+    #files li.comment .file-ico { color: var(--accent); }
+    .comment-text { white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4;
+                    -webkit-box-orient: vertical; overflow: hidden; }
+    .editor { flex: 1 1 100%; display: flex; flex-direction: column; gap: .5rem; }
+    .editor textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+    .editor-actions { display: flex; gap: .5rem; }
+    .ico { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 2;
+           stroke-linecap: round; stroke-linejoin: round; }
+    .file-ico { color: var(--muted); width: 24px; height: 24px; }
+    .info { flex: 1; min-width: 0; }
+    .name { overflow-wrap: anywhere; }
+    .stats { color: var(--muted); font-size: .85rem; display: flex; flex-wrap: wrap; gap: .25rem .75rem; align-items: center; }
+    .stats .ico { width: 14px; height: 14px; vertical-align: -2px; }
+    .rename { width: 100%; box-sizing: border-box; }
+
+    .kebab { border: 0; background: none; padding: .35rem; border-radius: 6px; color: var(--muted); display: flex; }
+    .kebab:hover, .kebab[aria-expanded="true"] { background: var(--hover); color: var(--fg); }
+    .menu { position: absolute; right: .5rem; top: calc(100% - .35rem); z-index: 10; min-width: 11rem; padding: .25rem;
+            background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); }
+    .menu[hidden] { display: none; }
+    .menu button { display: grid; grid-template-columns: 20px 1fr; align-items: center; column-gap: .65rem;
+                   width: 100%; text-align: left; border: 0; background: none; padding: .45rem .6rem; border-radius: 6px; }
+    .menu button:hover, .menu button:focus-visible { background: var(--hover); }
+    .menu .danger { color: var(--danger); }
+    .menu hr { border: 0; border-top: 1px solid var(--border); margin: .25rem 0; }
+  </style>
 </head>
 <body>
-  <div id="uppy"></div>
+  <h1 id="title">Upload files</h1>
+  <p class="muted">Files you upload go straight to the owner. You can rename or delete your own uploads below, but you can't view or download anything.</p>
+
+  <label for="comment">Leave a comment <span class="muted">(optional)</span></label>
+  <textarea id="comment" rows="2" maxlength="5000" placeholder="Anything the owner should know"></textarea>
+  <div class="comment-box">
+    <span class="muted">Saved as its own comment when you upload, or on its own with the button.</span>
+    <button id="leave" type="button" disabled>Leave comment</button>
+  </div>
+
+  <div id="uppy" style="margin-top: 1rem"></div>
+  <p id="msg" role="status"></p>
+
+  <h2>Your uploads and comments</h2>
+  <ul id="files"></ul>
+  <p id="empty" class="muted">Nothing from this device yet.</p>
+
+<script src="/static/vendor/uppy.min.js"></script>
+<script>
+const U = window.Uppy;
+const $ = (id) => document.getElementById(id);
+
+// Lucide-style 24px stroke icons. The markup is static; no user data ever goes through innerHTML.
+const ICONS = {
+  file: '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="M14 2v6h6"/>',
+  text: '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
+  video: '<path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/>',
+  audio: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+  archive: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/>',
+  note: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  noteAdd: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M12 7v6M9 10h6"/>',
+  noteRemove: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="m14.5 7.5-5 5M9.5 7.5l5 5"/>',
+  edit: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
+  more: '<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>',
+  rename: '<path d="M5 4h1a3 3 0 0 1 3 3 3 3 0 0 1 3-3h1M13 20h-1a3 3 0 0 1-3-3 3 3 0 0 1-3 3H5M5 16H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h1M13 8h7a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-7M9 7v10"/>',
+  trash: '<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6"/>',
+};
+const EXT = {
+  image: 'jpg jpeg png gif webp heic svg bmp tif tiff', video: 'mp4 mov avi mkv webm m4v',
+  audio: 'mp3 wav m4a flac ogg aac', archive: 'zip rar 7z tar gz tgz',
+  text: 'pdf doc docx txt rtf md odt xls xlsx csv ppt pptx',
+};
+function iconFor(filename) {
+  const ext = filename.split('.').pop().toLowerCase();
+  return Object.keys(EXT).find((k) => EXT[k].split(' ').includes(ext)) || 'file';
+}
+function icon(name, cls = '') {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('class', 'ico ' + cls);
+  svg.setAttribute('aria-hidden', 'true');
+  svg.innerHTML = ICONS[name];
+  return svg;
+}
+function el(tag, props = {}, ...kids) {
+  const e = Object.assign(document.createElement(tag), props);
+  e.append(...kids);
+  return e;
+}
+function formatSize(n) {
+  if (n == null) return null;
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  while (n >= 1000 && i < units.length - 1) { n /= 1000; i++; }
+  return (i === 0 || n >= 100 ? Math.round(n) : n.toFixed(1)) + ' ' + units[i];
+}
+function formatDate(iso) {
+  return iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : null;
+}
+const say = (text = '') => { $('msg').textContent = text; };
+
+// --- uploader -------------------------------------------------------------------------------
+// `note` is per file (Uppy's edit pencil); the default keeps an untouched field from being sent as "undefined".
+const uppy = new U.Uppy({ autoProceed: false, meta: { note: '' } })
+  .use(U.Dashboard, {
+    inline: true, target: '#uppy', width: '100%', height: 380, theme: 'auto',
+    proudlyDisplayPoweredByUppy: false, showProgressDetails: true,
+    metaFields: [{ id: 'note', name: 'Note', placeholder: 'Optional note about this file' }],
+  })
+  .use(U.XHRUpload, {
+    endpoint: '/api/upload', fieldName: 'file', formData: true,
+    allowedMetaFields: ['note'], limit: 2, timeout: 0,
+  });
+// The comment box is snapshotted into one comment file per upload (not attached to each file).
+uppy.addPreProcessor(async () => {
+  const text = $('comment').value.trim();
+  if (!text) return;
+  try { await saveComment(text); } catch (err) { say(`Couldn't save your comment: ${err.message}`); throw err; }
+});
+// the upload response is a complete list item; the page never re-fetches after an action
+uppy.on('upload-success', (file, response) => upsert(fileRow(response.body)));
+uppy.on('upload-error', (file, err) => say(`Couldn't upload ${file.name}: ${err.message}`));
+
+async function call(method, path, body) {
+  const r = await fetch(path, {
+    method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body && JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(r.status === 403 ? 'This link is no longer valid for this device.' : `Request failed (${r.status})`);
+  return r.status === 204 ? null : r.json();
+}
+
+async function saveComment(text) {
+  const c = await call('POST', '/api/comments', { text });
+  $('comment').value = '';
+  $('leave').disabled = true;
+  say();
+  upsert(commentRow(c));
+}
+$('comment').oninput = () => { $('leave').disabled = !$('comment').value.trim(); };
+$('leave').onclick = async () => {
+  $('leave').disabled = true;
+  try { await saveComment($('comment').value.trim()); } catch (err) { say(err.message); $('leave').disabled = false; }
+};
+
+// --- list -----------------------------------------------------------------------------------
+// The page holds the list itself: it is fetched once, then each action updates just its own row
+// from the server's response, so an open editor elsewhere is never disturbed.
+const list = $('files');
+const rows = new Map(); // item id -> <li>
+function show() {
+  $('empty').hidden = list.children.length > 0;
+  list.hidden = list.children.length === 0;
+}
+function upsert(li) {
+  const old = rows.get(li.dataset.id);
+  if (old) old.replaceWith(li); else list.prepend(li);
+  rows.set(li.dataset.id, li);
+  show();
+}
+function drop(id) {
+  rows.get(id)?.remove();
+  rows.delete(id);
+  show();
+}
+
+let openMenu = null;
+function closeMenu() {
+  if (!openMenu) return;
+  openMenu.menu.hidden = true;
+  openMenu.button.setAttribute('aria-expanded', 'false');
+  openMenu = null;
+}
+document.addEventListener('click', (e) => { if (openMenu && !openMenu.menu.parentElement.contains(e.target)) closeMenu(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && openMenu) { const b = openMenu.button; closeMenu(); b.focus(); }
+});
+
+// items: [iconName, label, handler, className?] or null for a divider
+function kebab(label, items) {
+  const button = el('button', { type: 'button', className: 'kebab', title: 'More actions', 'aria-label': label,
+                                'aria-haspopup': 'menu', 'aria-expanded': 'false' }, icon('more'));
+  const menu = el('div', { className: 'menu', role: 'menu', hidden: true }, ...items.map((it) => it
+    ? el('button', { type: 'button', role: 'menuitem', className: it[3] || '', onclick: () => { closeMenu(); it[2](); } },
+         icon(it[0]), it[1])
+    : el('hr', { role: 'separator' })));
+  button.onclick = () => {
+    const wasOpen = openMenu && openMenu.menu === menu;
+    closeMenu();
+    if (wasOpen) return;
+    menu.hidden = false;
+    button.setAttribute('aria-expanded', 'true');
+    openMenu = { menu, button };
+    menu.querySelector('button').focus();
+  };
+  menu.onkeydown = (e) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    const btns = [...menu.querySelectorAll('button')];
+    btns[(btns.indexOf(document.activeElement) + (e.key === 'ArrowDown' ? 1 : -1) + btns.length) % btns.length].focus();
+  };
+  return [button, menu];
+}
+
+const attempt = async (fn) => { try { await fn(); say(); } catch (err) { say(err.message); } };
+
+// Inline text editor under a row, shared by comments and file notes. onSave replaces the row.
+function openEditor(li, { initial, label, onSave }) {
+  li.querySelector('.editor')?.remove();
+  const ta = el('textarea', { value: initial, maxLength: 5000, rows: 3, 'aria-label': label });
+  const save = el('button', { type: 'button', className: 'primary', textContent: 'Save' });
+  const cancel = el('button', { type: 'button', textContent: 'Cancel' });
+  const box = el('div', { className: 'editor' }, ta, el('div', { className: 'editor-actions' }, save, cancel));
+  li.append(box);
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  cancel.onclick = () => box.remove();
+  save.onclick = async () => {
+    const text = ta.value.trim();
+    if (!text) return say('Write something first, or use the menu to remove it.');
+    save.disabled = true;
+    try { await onSave(text); say(); } catch (err) { say(err.message); save.disabled = false; }
+  };
+  ta.onkeydown = (e) => {
+    if (e.key === 'Escape') cancel.click();
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) save.click();
+  };
+}
+
+function startRename(f, nameEl) {
+  const input = el('input', { className: 'rename', value: f.filename, maxLength: 255, 'aria-label': 'New file name' });
+  nameEl.replaceWith(input);
+  input.focus();
+  const dot = f.filename.lastIndexOf('.');
+  input.setSelectionRange(0, dot > 0 ? dot : f.filename.length);
+  const cancel = () => input.isConnected && input.replaceWith(nameEl);
+  input.onkeydown = async (e) => {
+    if (e.key === 'Escape') return cancel();
+    if (e.key !== 'Enter') return;
+    const name = input.value.trim();
+    if (!name || name === f.filename) return cancel();
+    input.disabled = true;
+    try {
+      const r = await call('PATCH', '/api/files/' + f.id, { filename: name });
+      say();
+      upsert(fileRow({ ...f, filename: r.filename }));
+    } catch (err) { say(err.message); cancel(); }
+  };
+  input.onblur = cancel;
+}
+
+function fileRow(f) {
+  const nameEl = el('div', { className: 'name', textContent: f.filename });
+  const stats = el('div', { className: 'stats' });
+  [formatSize(f.size), formatDate(f.created_at)].filter(Boolean).forEach((t) => stats.append(el('span', { textContent: t })));
+  if (f.has_note) stats.append(el('span', { title: f.note || 'Includes a note' }, icon('note'), ' Note'));
+  const li = el('li', {}, icon(iconFor(f.filename), 'file-ico'), el('div', { className: 'info' }, nameEl, stats));
+  li.dataset.id = f.id;
+  const editNote = () => openEditor(li, {
+    initial: f.note || '', label: 'Note for ' + f.filename,
+    onSave: async (text) => { await call('PUT', `/api/files/${f.id}/note`, { text }); upsert(fileRow({ ...f, has_note: true, note: text })); },
+  });
+  li.append(...kebab(`Actions for ${f.filename}`, [
+    ['rename', 'Rename', () => startRename(f, nameEl)],
+    f.has_note ? ['edit', 'Edit Note', editNote] : ['noteAdd', 'Add Note', editNote],
+    f.has_note ? ['noteRemove', 'Remove Note', () => attempt(async () => {
+      await call('DELETE', `/api/files/${f.id}/note`);
+      upsert(fileRow({ ...f, has_note: false, note: '' }));
+    })] : undefined,
+    null,
+    ['trash', 'Delete', () => {
+      if (confirm(`Delete ${f.filename}?`)) attempt(async () => { await call('DELETE', '/api/files/' + f.id); drop(f.id); });
+    }, 'danger'],
+  ].filter((it) => it !== undefined)));
+  return li;
+}
+
+function commentRow(c) {
+  const stats = el('div', { className: 'stats' }, el('span', { textContent: 'Comment' }),
+                   ...[formatDate(c.created_at)].filter(Boolean).map((t) => el('span', { textContent: t })));
+  const li = el('li', { className: 'comment' }, icon('note', 'file-ico'),
+                el('div', { className: 'info' }, el('div', { className: 'comment-text', textContent: c.text }), stats));
+  li.dataset.id = c.id;
+  li.append(...kebab('Actions for comment', [
+    ['edit', 'Edit Comment', () => openEditor(li, {
+      initial: c.text, label: 'Comment',
+      onSave: async (text) => { await call('PATCH', '/api/comments/' + c.id, { text }); upsert(commentRow({ ...c, text })); },
+    })],
+    null,
+    ['trash', 'Delete Comment', () => {
+      if (confirm('Delete this comment?')) attempt(async () => { await call('DELETE', '/api/comments/' + c.id); drop(c.id); });
+    }, 'danger'],
+  ]));
+  return li;
+}
+
+async function load() {
+  const [files, comments] = await Promise.all([call('GET', '/api/my-files'), call('GET', '/api/my-comments')]);
+  const items = [...files.map((f) => ({ at: f.created_at || '', li: fileRow(f) })),
+                 ...comments.map((c) => ({ at: c.created_at || '', li: commentRow(c) }))]
+    .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+  items.forEach(({ li }) => { list.append(li); rows.set(li.dataset.id, li); });
+  show();
+}
+
+call('GET', '/api/me').then((m) => { $('title').textContent = m.name; document.title = m.name; });
+load().catch((e) => say(e.message));
+</script>
 </body>
 </html>

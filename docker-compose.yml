@@ -16,12 +16,20 @@ services:
       - backend
 
   backend:
-    build: ./app
+    build:
+      context: ./app
+      target: runtime
     container_name: dropbox_backend
     restart: unless-stopped
     env_file: .env
     volumes:
       - ./data:/data # SQLite database
+
+  test:
+    profiles: [test]
+    build:
+      context: ./app
+      target: test
 
 volumes:
   caddy_data:

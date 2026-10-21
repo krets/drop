@@ -1,0 +1,27 @@
+/* Follows the system light/dark setting. */
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --border: #d0d7de;
+  --surface: #f6f8fa; --hover: #eaeef2; --accent: #0969da; --accent-soft: #ddf4ff; --danger: #cf222e;
+  --shadow: 0 8px 24px rgb(31 35 40 / .15);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117; --fg: #e6edf3; --muted: #8b949e; --border: #30363d;
+    --surface: #161b22; --hover: #262c36; --accent: #4493f8; --accent-soft: #112a45; --danger: #f85149;
+    --shadow: 0 8px 24px rgb(1 4 9 / .6);
+  }
+}
+body { background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }
+a { color: var(--accent); }
+button, input, textarea, select {
+  font: inherit; color: inherit; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 6px; padding: .4rem .7rem;
+}
+button { cursor: pointer; }
+button:hover { background: var(--hover); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.muted { color: var(--muted); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover { filter: brightness(1.1); }
+button:disabled { opacity: .5; cursor: default; }

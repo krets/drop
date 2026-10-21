@@ -6,13 +6,15 @@ from starlette.middleware.sessions import SessionMiddleware
 
 import config
 from db import init_db
-from routes import admin, auth, public
+from services import gdrive
+from routes import admin, auth, notes, public
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     yield
+    await gdrive.close()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -22,5 +24,6 @@ app.add_middleware(
 )
 app.include_router(auth.router)
 app.include_router(public.router)
+app.include_router(notes.router)
 app.include_router(admin.router)
 app.mount("/static", StaticFiles(directory="static"), name="static")

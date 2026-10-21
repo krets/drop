@@ -8,8 +8,10 @@ Stack: Caddy, FastAPI, SQLite, Uppy.js, Google Drive API v3.
 
 - `app/main.py`, `config.py`, `db.py`, `schema.sql` - app wiring and SQLite schema
 - `app/services/sessions.py` - device onboarding window / max-device logic
-- `app/services/gdrive.py` - Drive wrapper (streaming upload, rename, trash)
-- `app/routes/public.py` - `/drop/{id}` and the uploader API
+- `app/services/gdrive.py` - Drive wrapper over httpx (resumable streaming upload, rename, trash)
+- `app/services/multipart_stream.py` - incremental multipart parser, so uploads never touch disk
+- `app/routes/public.py` - `/drop/{id}`, password unlock, and the uploader API
+- `app/tests/` - pytest suite against a fake Drive
 - `app/routes/admin.py` - Google-OAuth-gated admin
 - `app/static/` - frontend
 
@@ -17,3 +19,7 @@ Stack: Caddy, FastAPI, SQLite, Uppy.js, Google Drive API v3.
 
     cp .env.example .env   # fill in
     docker compose up -d --build
+
+## Test
+
+    docker compose --profile test run --rm --build test
