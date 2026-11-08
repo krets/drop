@@ -36,6 +36,14 @@ def init_db() -> None:
                           ("drive_failures", "INTEGER NOT NULL DEFAULT 0"), ("drive_alerted_at", "TEXT")):
             if col not in have:
                 conn.execute(f"ALTER TABLE admins ADD COLUMN {col} {decl}")
+        if "owner" not in {row[1] for row in conn.execute("PRAGMA table_info(events)")}:
+            conn.execute("ALTER TABLE events ADD COLUMN owner TEXT")
+            conn.execute(
+                "UPDATE events SET owner = COALESCE("
+                "(SELECT created_by FROM dropboxes d WHERE d.id = events.dropbox_id),"
+                " (SELECT created_by FROM backups b WHERE b.id = events.dropbox_id),"
+                " CASE WHEN actor LIKE 'admin:%' THEN substr(actor, 7) END)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_owner ON events(owner, id)")
         # an interrupted upload leaves a row that no Drive file backs
         conn.execute("DELETE FROM uploaded_files WHERE status = 'uploading'")
         conn.execute("DELETE FROM backup_files WHERE status = 'uploading'")

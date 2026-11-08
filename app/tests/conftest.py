@@ -175,9 +175,22 @@ def admin(app):
 
 
 @pytest.fixture
+def other_admin(app, monkeypatch):
+    """A client logged in as a second admin, with its own cookie jar."""
+    monkeypatch.setattr(config, "ADMIN_EMAILS", ["admin@example.com", "other@example.com"])
+    db = sqlite3.connect(config.DB_PATH)
+    db.execute("INSERT INTO admins (email, google_id, refresh_token) VALUES ('other@example.com', 'g2', 'rt2')")
+    db.commit()
+    db.close()
+    c = TestClient(main.app, cookies={})
+    c.cookies.set("admin_session", signed_cookie({"admin_email": "other@example.com"}))
+    return c
+
+
+@pytest.fixture
 def make_box(app, drive):
     """Insert a dropbox straight into SQLite; returns its id."""
-    def make(password=None, max_devices=3, window_hours=48, days=30, revoked=0):
+    def make(password=None, max_devices=3, window_hours=48, days=30, revoked=0, owner="admin@example.com"):
         import bcrypt
         folder = drive.add_folder()
         box_id = str(uuid.uuid4())
@@ -187,8 +200,8 @@ def make_box(app, drive):
         db.execute(
             "INSERT INTO dropboxes (id, gdrive_folder_id, name, password_hash, created_by, created_at,"
             " expires_at, onboard_window_hours, max_devices, is_revoked)"
-            " VALUES (?, ?, 'Test box', ?, 'admin@example.com', ?, ?, ?, ?, ?)",
-            (box_id, folder, pw, (now - timedelta(hours=0)).isoformat(),
+            " VALUES (?, ?, 'Test box', ?, ?, ?, ?, ?, ?, ?)",
+            (box_id, folder, pw, owner, (now - timedelta(hours=0)).isoformat(),
              (now + timedelta(days=days)).isoformat(), window_hours, max_devices, revoked))
         db.commit()
         db.close()
@@ -218,16 +231,21 @@ class Outbox(list):
     """Emails the app tried to send. Set `.fail` to make sending raise."""
     fail = False
 
+    def __init__(self):
+        super().__init__()
+        self.to: list[list[str]] = []  # recipients of each message, parallel to the list itself
+
 
 @pytest.fixture
 def outbox(monkeypatch):
     from services import mailer
     box = Outbox()
 
-    async def send(subject, body):
+    async def send(subject, body, to):
         if box.fail:
             raise OSError("smtp down")
         box.append((subject, body))
+        box.to.append(to)
 
     for k, v in (("SMTP_SERVER", "smtp.test"), ("SMTP_FROM", "drop@test"), ("NOTIFY_EMAILS", ["admin@example.com"])):
         monkeypatch.setattr(config, k, v)

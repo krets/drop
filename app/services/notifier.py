@@ -85,8 +85,9 @@ async def flush_once(now: datetime | None = None) -> int:
             session = conn.execute("SELECT * FROM device_sessions WHERE id = ?", (sid,)).fetchone()
             box = conn.execute("SELECT * FROM dropboxes WHERE id = ?", (files[0]["dropbox_id"],)).fetchone()
             subject, body = compose(box, session, files)
+            to = config.notify_addresses(box["created_by"])
             try:
-                await mailer.send(subject, body)
+                await mailer.send(subject, body, to)
             except Exception as e:  # SMTP down, bad credentials, ...: try again later, keep the files pending
                 _retry_at[sid] = now + RETRY_AFTER
                 logger.warning("upload notification failed: %s", e)
@@ -99,7 +100,7 @@ async def flush_once(now: datetime | None = None) -> int:
                          (now.isoformat(), *ids))
             conn.commit()
             events.log(conn, "notification_sent", dropbox_id=box["id"], session_id=sid, kind="uploads",
-                       files=len(files), to=config.NOTIFY_EMAILS)
+                       files=len(files), to=to)
             sent += 1
     finally:
         conn.close()

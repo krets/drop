@@ -68,7 +68,8 @@ CREATE TABLE IF NOT EXISTS events (
     dropbox_id  TEXT,
     device_ref  TEXT,
     ip          TEXT,
-    detail      TEXT
+    detail      TEXT,
+    owner       TEXT  -- the admin whose dropbox/backup this concerns; NULL = nobody's
 );
 CREATE INDEX IF NOT EXISTS idx_events_dropbox ON events(dropbox_id, id);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events(type, id);

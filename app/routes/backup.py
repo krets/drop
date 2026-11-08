@@ -212,20 +212,21 @@ async def create_backup(body: BackupIn, request: Request, admin=Depends(require_
 
 
 @admin_router.get("/api/backups")
-def list_admin_backups(_=Depends(require_admin), db=Depends(get_db)):
+def list_admin_backups(admin=Depends(require_admin), db=Depends(get_db)):
     rows = db.execute(
         "SELECT b.id, b.name, b.gdrive_folder_id, b.gdrive_folder_path, b.created_at, b.is_revoked,"
         " b.last_upload_at, b.keep_daily, b.keep_weekly, b.keep_monthly, b.keep_yearly,"
         " (SELECT COUNT(*) FROM backup_files f WHERE f.backup_id = b.id AND f.status = 'completed') AS files,"
         " (SELECT COALESCE(SUM(size), 0) FROM backup_files f WHERE f.backup_id = b.id AND f.status = 'completed')"
-        " AS bytes FROM backups b ORDER BY b.created_at DESC").fetchall()
+        " AS bytes FROM backups b WHERE b.created_by = ? ORDER BY b.created_at DESC",
+        (admin["email"],)).fetchall()
     return [{**dict(r), "url": f"{config.BASE_URL}/api/backup/"} for r in rows]
 
 
 @admin_router.patch("/api/backups/{backup_id}")
 async def adjust_backup(backup_id: str, body: BackupAdjust, request: Request, admin=Depends(require_admin),
                         db=Depends(get_db)):
-    b = db.execute("SELECT * FROM backups WHERE id = ?", (backup_id,)).fetchone()
+    b = db.execute("SELECT * FROM backups WHERE id = ? AND created_by = ?", (backup_id, admin["email"])).fetchone()
     if b is None:
         raise HTTPException(404)
     if b["is_revoked"]:
@@ -247,7 +248,8 @@ async def adjust_backup(backup_id: str, body: BackupAdjust, request: Request, ad
 
 @admin_router.post("/api/backups/{backup_id}/revoke")
 def revoke_backup(backup_id: str, request: Request, admin=Depends(require_admin), db=Depends(get_db)):
-    cur = db.execute("UPDATE backups SET is_revoked = 1 WHERE id = ?", (backup_id,))
+    cur = db.execute("UPDATE backups SET is_revoked = 1 WHERE id = ? AND created_by = ?",
+                     (backup_id, admin["email"]))
     if cur.rowcount == 0:
         raise HTTPException(404)
     db.commit()

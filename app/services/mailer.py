@@ -10,18 +10,18 @@ import config
 
 
 def configured() -> bool:
-    return bool(config.SMTP_SERVER and config.SMTP_FROM and config.NOTIFY_EMAILS)
+    return bool(config.SMTP_SERVER and config.SMTP_FROM)
 
 
 def oneline(text: str, limit: int = 150) -> str:
     return re.sub(r"\s+", " ", text).strip()[:limit]
 
 
-def _send_sync(subject: str, body: str) -> None:
+def _send_sync(subject: str, body: str, to: list[str]) -> None:
     msg = EmailMessage()
     msg["Subject"] = oneline(subject, 200)
     msg["From"] = config.SMTP_FROM
-    msg["To"] = ", ".join(config.NOTIFY_EMAILS)
+    msg["To"] = ", ".join(to)
     msg.set_content(body)
     ctx = ssl.create_default_context()
     if config.SMTP_SECURITY == "ssl":
@@ -36,8 +36,10 @@ def _send_sync(subject: str, body: str) -> None:
         smtp.send_message(msg)
 
 
-async def send(subject: str, body: str) -> None:
+async def send(subject: str, body: str, to: list[str]) -> None:
     """Raises on failure (smtplib.SMTPException / OSError); callers decide whether to retry."""
     if not configured():
         raise RuntimeError("SMTP is not configured")
-    await asyncio.to_thread(_send_sync, subject, body)
+    if not to:
+        raise RuntimeError("No recipient")
+    await asyncio.to_thread(_send_sync, subject, body, to)

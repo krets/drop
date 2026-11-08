@@ -32,6 +32,7 @@ def nudge() -> None:
 
 async def _alert(conn, admin, status: str, error: str | None) -> bool:
     login = f"{config.BASE_URL}/admin/"
+    to = config.notify_addresses(admin["email"])
     if status == "auth_required":
         subject = "[Drop] Google Drive needs you to sign in again"
         body = (f"The dropbox service can no longer reach Google Drive as {admin['email']}.\n"
@@ -41,12 +42,13 @@ async def _alert(conn, admin, status: str, error: str | None) -> bool:
         body = (f"The last {config.HEARTBEAT_FAILURES} Drive connectivity checks for {admin['email']} failed.\n"
                 f"Last error: {error}\n\nThis is usually temporary. If it persists, check {login}\n")
     try:
-        await mailer.send(subject, body)
+        await mailer.send(subject, body, to)
     except Exception as e:
         logger.warning("could not send drive alert: %s", e)
-        events.log(conn, "notification_failed", kind="drive_alert", error=f"{type(e).__name__}: {e}"[:300])
+        events.log(conn, "notification_failed", owner=admin["email"], kind="drive_alert",
+                   error=f"{type(e).__name__}: {e}"[:300])
         return False
-    events.log(conn, "notification_sent", kind="drive_alert", status=status, to=config.NOTIFY_EMAILS)
+    events.log(conn, "notification_sent", owner=admin["email"], kind="drive_alert", status=status, to=to)
     return True
 
 
@@ -71,14 +73,16 @@ async def check_admin(conn: sqlite3.Connection, admin: sqlite3.Row, now: datetim
                 status = "unreachable"
 
     if status != prev:
-        events.log(conn, "drive_status_changed", actor="system", old=prev, new=status, error=error)
+        events.log(conn, "drive_status_changed", actor="system", owner=admin["email"], old=prev, new=status, error=error)
         if prev in PROBLEMS and status not in PROBLEMS and alerted and mailer.configured():
+            to = config.notify_addresses(admin["email"])
             try:
                 await mailer.send("[Drop] Google Drive connection restored",
-                                  f"The dropbox service can reach Google Drive as {admin['email']} again.\n")
-                events.log(conn, "notification_sent", kind="drive_restored", to=config.NOTIFY_EMAILS)
+                                  f"The dropbox service can reach Google Drive as {admin['email']} again.\n",
+                                  to)
+                events.log(conn, "notification_sent", owner=admin["email"], kind="drive_restored", to=to)
             except Exception as e:
-                events.log(conn, "notification_failed", kind="drive_restored", error=f"{type(e).__name__}: {e}"[:300])
+                events.log(conn, "notification_failed", owner=admin["email"], kind="drive_restored", error=f"{type(e).__name__}: {e}"[:300])
         alerted = None  # a new state is a new alert (and recovery clears it)
 
     if status in PROBLEMS:

@@ -14,8 +14,18 @@ def ip_of(request) -> str | None:
     return request.client.host if request is not None and request.client else None
 
 
+def owner_of(db: sqlite3.Connection, dropbox_id: str | None, actor: str) -> str | None:
+    """The admin an event belongs to: the creator of the dropbox/backup it concerns, else the acting admin."""
+    if dropbox_id:
+        for table in ("dropboxes", "backups"):
+            row = db.execute(f"SELECT created_by FROM {table} WHERE id = ?", (dropbox_id,)).fetchone()
+            if row:
+                return row[0]
+    return actor[len("admin:"):] if actor.startswith("admin:") else None
+
+
 def log(db: sqlite3.Connection, type: str, *, actor: str = "system", dropbox_id: str | None = None,
-        session_id: str | None = None, request=None, **detail) -> None:
+        session_id: str | None = None, request=None, owner: str | None = None, **detail) -> None:
     """Record an event and commit at once.
 
     Commits the caller's pending work too: handlers often raise right after logging (a denied
@@ -25,9 +35,11 @@ def log(db: sqlite3.Connection, type: str, *, actor: str = "system", dropbox_id:
     try:
         text = json.dumps({k: v for k, v in detail.items() if v is not None}, default=str)[:MAX_DETAIL]
         db.execute(
-            "INSERT INTO events (ts, type, actor, dropbox_id, device_ref, ip, detail) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO events (ts, type, actor, dropbox_id, device_ref, ip, detail, owner)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (utcnow().isoformat(), type, actor, (dropbox_id or None) and dropbox_id[:64],
-             device_ref(session_id) if session_id else None, ip_of(request), text),
+             device_ref(session_id) if session_id else None, ip_of(request), text,
+             owner or owner_of(db, dropbox_id, actor)),
         )
         db.commit()
     except sqlite3.Error:

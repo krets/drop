@@ -26,10 +26,19 @@ Stack: Traefik (external), FastAPI, SQLite, Uppy.js, Google Drive API v3.
     cp .env.example .env   # fill in
     docker compose up -d --build
 
+## Multiple admins
+
+`ADMIN_EMAILS` is a comma-separated list; each address signs in with its own Google account, and the Drive
+login it stores is used only for that admin's shares. An admin sees and manages only the dropboxes and backup
+shares they created, plus the audit events that concern them (`events.owner`). Events that belong to nobody
+(e.g. a stranger's denied login) show up for the first admin in the list. Removing an address from the env
+does not remove an existing admin; delete their row from `admins` to do that.
+
 ## Notifications and monitoring
 
 Set `SMTP_SERVER`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` in `.env` (optional: `SMTP_FROM`, `SMTP_SECURITY`
-= `starttls`/`ssl`/`none`, `NOTIFY_EMAILS`; recipients default to `ADMIN_EMAILS`). Mail goes over SMTP rather
+= `starttls`/`ssl`/`none`, `NOTIFY_EMAILS`). Each admin is mailed at their own login address; `NOTIFY_EMAILS`, if set,
+replaces that for the first admin only. Mail goes over SMTP rather
 than the Gmail API so the "sign in to Google again" alert never depends on the login it reports on.
 
 - **Upload notice**: one email per device, sent after `NOTIFY_QUIET_SECONDS` (120) without upload activity,

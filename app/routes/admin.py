@@ -33,6 +33,14 @@ def _token(admin) -> str:
     return admin["refresh_token"]
 
 
+def owned_box(db, admin, dropbox_id: str):
+    """The admin's own dropbox; someone else's looks exactly like a missing one."""
+    box = db.execute("SELECT * FROM dropboxes WHERE id = ? AND created_by = ?", (dropbox_id, admin["email"])).fetchone()
+    if box is None:
+        raise HTTPException(404)
+    return box
+
+
 @router.get("/")
 def page(request: Request):
     if not request.session.get("admin_email"):
@@ -123,7 +131,7 @@ async def list_dropboxes(admin=Depends(require_admin), db=Depends(get_db)):
         " d.max_devices, d.is_revoked, d.gdrive_folder_path, d.password_hash IS NOT NULL AS has_password,"
         " (SELECT COUNT(*) FROM device_sessions s WHERE s.dropbox_id = d.id AND s.is_revoked = 0) AS devices,"
         " (SELECT COUNT(*) FROM uploaded_files f WHERE f.dropbox_id = d.id AND f.status = 'completed') AS files"
-        " FROM dropboxes d ORDER BY d.created_at DESC"
+        " FROM dropboxes d WHERE d.created_by = ? ORDER BY d.created_at DESC", (admin["email"],)
     ).fetchall()
     out = [{**dict(r), "url": f"{config.BASE_URL}/drop/{r['id']}",
             "onboard_ends_at": (datetime.fromisoformat(r["created_at"])
@@ -141,7 +149,7 @@ async def list_dropboxes(admin=Depends(require_admin), db=Depends(get_db)):
 
 @router.post("/api/dropboxes/{dropbox_id}/revoke")
 def revoke_dropbox(dropbox_id: str, request: Request, admin=Depends(require_admin), db=Depends(get_db)):
-    cur = db.execute("UPDATE dropboxes SET is_revoked = 1 WHERE id = ?", (dropbox_id,))
+    cur = db.execute("UPDATE dropboxes SET is_revoked = 1 WHERE id = ? AND created_by = ?", (dropbox_id, admin["email"]))
     if cur.rowcount == 0:
         raise HTTPException(404)
     db.commit()
@@ -165,9 +173,7 @@ class Adjust(BaseModel):
 
 @router.patch("/api/dropboxes/{dropbox_id}")
 def adjust_dropbox(dropbox_id: str, body: Adjust, request: Request, admin=Depends(require_admin), db=Depends(get_db)):
-    box = db.execute("SELECT * FROM dropboxes WHERE id = ?", (dropbox_id,)).fetchone()
-    if box is None:
-        raise HTTPException(404)
+    box = owned_box(db, admin, dropbox_id)
     if box["is_revoked"]:
         raise HTTPException(409, "This dropbox is revoked")
     now = utcnow()
@@ -191,9 +197,8 @@ def adjust_dropbox(dropbox_id: str, body: Adjust, request: Request, admin=Depend
 
 
 @router.get("/api/dropboxes/{dropbox_id}/devices")
-def list_devices(dropbox_id: str, _=Depends(require_admin), db=Depends(get_db)):
-    if db.execute("SELECT 1 FROM dropboxes WHERE id = ?", (dropbox_id,)).fetchone() is None:
-        raise HTTPException(404)
+def list_devices(dropbox_id: str, admin=Depends(require_admin), db=Depends(get_db)):
+    owned_box(db, admin, dropbox_id)
     rows = db.execute(
         "SELECT s.id, s.created_at, s.last_seen_at, s.user_agent, s.is_revoked,"
         " (SELECT COUNT(*) FROM uploaded_files f WHERE f.session_id = s.id AND f.status = 'completed') AS files,"
@@ -206,6 +211,7 @@ def list_devices(dropbox_id: str, _=Depends(require_admin), db=Depends(get_db)):
 
 @router.post("/api/dropboxes/{dropbox_id}/devices/{ref}/revoke")
 def revoke_device(dropbox_id: str, ref: str, request: Request, admin=Depends(require_admin), db=Depends(get_db)):
+    owned_box(db, admin, dropbox_id)
     ids = [r["id"] for r in db.execute("SELECT id FROM device_sessions WHERE dropbox_id = ?", (dropbox_id,))]
     match = next((i for i in ids if device_ref(i) == ref), None)
     if match is None:
@@ -224,7 +230,7 @@ def status(admin=Depends(require_admin)):
     return {
         "drive": {"status": admin["drive_status"], "checked_at": admin["drive_checked_at"],
                   "ok_at": admin["drive_ok_at"], "error": admin["drive_error"] if admin["drive_status"] != "ok" else None},
-        "email": {"configured": mailer.configured(), "to": config.NOTIFY_EMAILS},
+        "email": {"configured": mailer.configured(), "to": config.notify_addresses(admin["email"])},
     }
 
 
@@ -233,13 +239,14 @@ async def test_email(request: Request, admin=Depends(require_admin), db=Depends(
     if not mailer.configured():
         raise HTTPException(409, "SMTP is not configured")
     try:
-        await mailer.send("[Drop] Test notification", "If you can read this, upload and Drive alerts will reach you.\n")
+        await mailer.send("[Drop] Test notification", "If you can read this, upload and Drive alerts will reach you.\n",
+                          config.notify_addresses(admin["email"]))
     except Exception as e:
         events.log(db, "notification_failed", actor=f"admin:{admin['email']}", request=request, kind="test",
                    error=f"{type(e).__name__}: {e}"[:300])
         raise HTTPException(502, f"Could not send: {type(e).__name__}")
     events.log(db, "notification_sent", actor=f"admin:{admin['email']}", request=request, kind="test",
-               to=config.NOTIFY_EMAILS)
+               to=config.notify_addresses(admin["email"]))
     return {"ok": True}
 
 
@@ -252,7 +259,10 @@ def _detail(text: str | None) -> dict:
 
 @router.get("/api/events")
 def list_events(before: int | None = None, limit: int = Query(100, ge=1, le=500), type: str | None = None,
-                dropbox_id: str | None = None, _=Depends(require_admin), db=Depends(get_db)):
+                dropbox_id: str | None = None, admin=Depends(require_admin), db=Depends(get_db)):
+    # events nobody owns (a stranger's failed login, say) go to the first admin
+    mine = "(e.owner = ? OR (e.owner IS NULL AND ?))"
+    mine_args = [admin["email"], admin["email"] == config.primary_admin()]
     where, args = [], []
     for col, val in (("id <", before), ("type =", type), ("dropbox_id =", dropbox_id)):
         if val is not None:
@@ -261,8 +271,9 @@ def list_events(before: int | None = None, limit: int = Query(100, ge=1, le=500)
     rows = db.execute(
         "SELECT e.*, COALESCE(d.name, b.name) AS dropbox_name FROM events e"
         " LEFT JOIN dropboxes d ON d.id = e.dropbox_id LEFT JOIN backups b ON b.id = e.dropbox_id"
-        + (" WHERE " + " AND ".join("e." + w for w in where) if where else "")
-        + " ORDER BY e.id DESC LIMIT ?", (*args, limit)).fetchall()
+        + " WHERE " + " AND ".join([mine] + ["e." + w for w in where])
+        + " ORDER BY e.id DESC LIMIT ?", (*mine_args, *args, limit)).fetchall()
     out = [{**dict(r), "detail": _detail(r["detail"])} for r in rows]
     return {"events": out, "next": out[-1]["id"] if len(out) == limit else None,
-            "types": [r[0] for r in db.execute("SELECT DISTINCT type FROM events ORDER BY type")]}
+            "types": [r[0] for r in db.execute(
+                "SELECT DISTINCT type FROM events e WHERE " + mine + " ORDER BY type", mine_args)]}

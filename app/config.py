@@ -25,7 +25,19 @@ SMTP_PASS = os.environ.get("SMTP_PASS", "")
 SMTP_FROM = os.environ.get("SMTP_FROM") or SMTP_USER
 # "starttls" (usually port 587), "ssl" (465) or "none"; defaults from the port
 SMTP_SECURITY = os.environ.get("SMTP_SECURITY") or ("ssl" if SMTP_PORT == 465 else "starttls")
-NOTIFY_EMAILS = [e.strip() for e in os.environ.get("NOTIFY_EMAILS", "").split(",") if e.strip()] or ADMIN_EMAILS
+# Optional override of where the *first* admin's notices go; every other admin is mailed at their login address.
+NOTIFY_EMAILS = [e.strip() for e in os.environ.get("NOTIFY_EMAILS", "").split(",") if e.strip()]
+
+
+def primary_admin() -> str | None:
+    """The first ADMIN_EMAILS entry. It also sees audit events that belong to no admin."""
+    return ADMIN_EMAILS[0] if ADMIN_EMAILS else None
+
+
+def notify_addresses(owner: str | None) -> list[str]:
+    if owner and owner == primary_admin() and NOTIFY_EMAILS:
+        return NOTIFY_EMAILS
+    return [owner] if owner else []
 
 # --- background work -----------------------------------------------------------------------
 BACKGROUND_TASKS = os.environ.get("BACKGROUND_TASKS", "1") != "0"
