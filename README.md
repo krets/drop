@@ -16,6 +16,8 @@ Stack: Traefik (external), FastAPI, SQLite, Uppy.js, Google Drive API v3.
 - `app/services/notifier.py` - batches finished uploads into one email per device
 - `app/services/heartbeat.py` - checks the stored Google login and emails when it needs attention
 - `app/services/events.py` - append-only audit log (`events` table, shown under Activity in the admin)
+- `app/routes/backup.py` - backup shares: bearer-token `PUT /api/backup/{name}` for scripts, plus their admin API
+- `app/services/retention.py` - which backups to keep (daily/weekly/monthly/yearly, by upload time)
 - `app/services/mailer.py` - SMTP sender
 - `app/static/` - frontend
 
@@ -37,6 +39,18 @@ than the Gmail API so the "sign in to Google again" alert never depends on the l
   every `ALERT_REMINDER_HOURS` (24) and a "restored" mail follows recovery. Signing in again re-checks at once.
 - **Audit log**: logins, dropbox changes, device onboarding and revocation, failed passwords, every upload,
   rename and delete, Drive status changes and each email sent or failed. Rows are never edited or deleted by the app.
+
+## Backup shares
+
+For scripts rather than people. In the admin, create a backup share: pick a Drive folder and a retention
+policy (default: last upload of each of 7 days, first of each of 4 weeks, 12 months and 10 years). You get a token once.
+
+    curl -fsS -H "Authorization: Bearer $TOKEN" -T db.tar.gz "$BASE_URL/api/backup/myapp-$(date +%F).tar.gz"
+
+- Streams straight to Drive using the stored Google login; the script holds no Google credentials or cookies.
+- After each upload (and when the policy is edited) older files outside the policy move to the Drive trash.
+  Pruning looks at upload time only, so file names are the script's business. The newest file is never pruned.
+- `GET /api/backup` lists what is kept. The token can't delete; revoke it in the admin to cut it off.
 
 ## Local development
 

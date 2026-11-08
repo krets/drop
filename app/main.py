@@ -13,7 +13,7 @@ from db import init_db
 import asyncio
 
 from services import gdrive, heartbeat, notifier
-from routes import admin, auth, notes, public
+from routes import admin, auth, backup, notes, public
 
 
 @asynccontextmanager
@@ -37,6 +37,8 @@ app.include_router(auth.router)
 app.include_router(public.router)
 app.include_router(notes.router)
 app.include_router(admin.router)
+app.include_router(backup.router)
+app.include_router(backup.admin_router)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 

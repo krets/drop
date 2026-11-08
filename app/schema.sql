@@ -72,3 +72,32 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_dropbox ON events(dropbox_id, id);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events(type, id);
+
+-- Token-authenticated backup shares for scripts. The server prunes old files by upload time.
+CREATE TABLE IF NOT EXISTS backups (
+    id                 TEXT PRIMARY KEY,
+    name               TEXT NOT NULL,
+    token_hash         TEXT NOT NULL UNIQUE,
+    gdrive_folder_id   TEXT NOT NULL,
+    gdrive_folder_path TEXT,
+    created_by         TEXT NOT NULL,
+    created_at         TEXT NOT NULL,
+    is_revoked         INTEGER NOT NULL DEFAULT 0,
+    last_upload_at     TEXT,
+    keep_daily         INTEGER NOT NULL DEFAULT 7,
+    keep_weekly        INTEGER NOT NULL DEFAULT 0,
+    keep_monthly       INTEGER NOT NULL DEFAULT 12,
+    keep_yearly        INTEGER NOT NULL DEFAULT 10
+);
+
+CREATE TABLE IF NOT EXISTS backup_files (
+    id             TEXT PRIMARY KEY,
+    backup_id      TEXT NOT NULL REFERENCES backups(id),
+    gdrive_file_id TEXT,
+    filename       TEXT NOT NULL,
+    size           INTEGER,
+    created_at     TEXT NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'uploading' CHECK (status IN ('uploading', 'completed', 'pruned')),
+    pruned_at      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_backup_files ON backup_files(backup_id, status, created_at);

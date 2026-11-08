@@ -259,7 +259,8 @@ def list_events(before: int | None = None, limit: int = Query(100, ge=1, le=500)
             where.append(f"{col} ?")
             args.append(val)
     rows = db.execute(
-        "SELECT e.*, d.name AS dropbox_name FROM events e LEFT JOIN dropboxes d ON d.id = e.dropbox_id"
+        "SELECT e.*, COALESCE(d.name, b.name) AS dropbox_name FROM events e"
+        " LEFT JOIN dropboxes d ON d.id = e.dropbox_id LEFT JOIN backups b ON b.id = e.dropbox_id"
         + (" WHERE " + " AND ".join("e." + w for w in where) if where else "")
         + " ORDER BY e.id DESC LIMIT ?", (*args, limit)).fetchall()
     out = [{**dict(r), "detail": _detail(r["detail"])} for r in rows]

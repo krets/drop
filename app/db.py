@@ -38,6 +38,7 @@ def init_db() -> None:
                 conn.execute(f"ALTER TABLE admins ADD COLUMN {col} {decl}")
         # an interrupted upload leaves a row that no Drive file backs
         conn.execute("DELETE FROM uploaded_files WHERE status = 'uploading'")
+        conn.execute("DELETE FROM backup_files WHERE status = 'uploading'")
         conn.executemany(
             "INSERT OR IGNORE INTO admins (email) VALUES (?)", [(e,) for e in config.ADMIN_EMAILS]
         )

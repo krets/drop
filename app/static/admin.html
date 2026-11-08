@@ -244,6 +244,27 @@
       </table>
     </section>
 
+    <section aria-labelledby="bkHead" style="margin-top: var(--s5)">
+      <div class="section-head">
+        <h2 id="bkHead" tabindex="-1">Backup shares</h2>
+        <label class="toggle" id="bkToggleWrap" hidden><input type="checkbox" id="bkShowRevoked"> Show revoked</label>
+        <button class="btn primary" type="button" id="bkNewBtn">New backup share</button>
+      </div>
+      <p class="muted" id="bkLoading">Loading…</p>
+      <div class="empty" id="bkEmpty" hidden>
+        <h3 id="bkEmptyTitle">No backup shares yet</h3>
+        <p class="muted" id="bkEmptyText">A backup share gives a script a token to upload into one Drive folder. Old files are pruned for you.</p>
+        <button class="btn primary" type="button" id="bkEmptyNew">New backup share</button>
+      </div>
+      <table id="bkTbl" hidden>
+        <thead><tr>
+          <th scope="col">Name</th><th scope="col">Folder</th><th scope="col">Last upload</th>
+          <th scope="col" class="num">Files</th><th scope="col">Keeps</th><th scope="col"><span class="sr">Actions</span></th>
+        </tr></thead>
+        <tbody id="bkList"></tbody>
+      </table>
+    </section>
+
     <section aria-labelledby="logHead" style="margin-top: var(--s5)">
       <div class="section-head">
         <h2 id="logHead">Activity</h2>
@@ -291,13 +312,38 @@
             <p class="err" id="err-dest"></p>
           </div>
 
-          <div class="field">
+          <div class="field" id="pwField">
             <label for="password">Password (optional)</label>
             <input id="password" name="password" type="text" autocomplete="off">
           </div>
         </div>
 
-        <fieldset class="limits">
+        <fieldset class="limits" id="retainSet" hidden>
+          <legend>Keep</legend>
+          <p class="hint">Older files go to the Drive trash after each upload. Judged by upload time, not file name.</p>
+          <div class="field">
+            <label for="rDaily">Daily</label>
+            <div class="suffix"><input id="rDaily" type="number" inputmode="numeric" value="7" min="0" max="3650" aria-describedby="err-rDaily"><span>days</span></div>
+            <p class="err" id="err-rDaily"></p>
+          </div>
+          <div class="field">
+            <label for="rWeekly">Weekly</label>
+            <div class="suffix"><input id="rWeekly" type="number" inputmode="numeric" value="4" min="0" max="3650" aria-describedby="err-rWeekly"><span>weeks</span></div>
+            <p class="err" id="err-rWeekly"></p>
+          </div>
+          <div class="field">
+            <label for="rMonthly">Monthly</label>
+            <div class="suffix"><input id="rMonthly" type="number" inputmode="numeric" value="12" min="0" max="3650" aria-describedby="err-rMonthly"><span>months</span></div>
+            <p class="err" id="err-rMonthly"></p>
+          </div>
+          <div class="field">
+            <label for="rYearly">Yearly</label>
+            <div class="suffix"><input id="rYearly" type="number" inputmode="numeric" value="10" min="0" max="3650" aria-describedby="err-rYearly"><span>years</span></div>
+            <p class="err" id="err-rYearly"></p>
+          </div>
+        </fieldset>
+
+        <fieldset class="limits" id="limitsSet">
           <legend>Limits</legend>
           <div class="field">
             <label for="expires">Expires</label>
@@ -385,6 +431,30 @@
       <p class="err" id="devErr" role="alert" hidden></p>
       <div class="actions"><button type="button" class="btn" id="manageClose">Close</button></div>
     </div>
+  </dialog>
+
+  <dialog id="bkDlg" class="narrow" aria-labelledby="bkTitle">
+    <form id="bkForm" class="dlg" novalidate>
+      <h2 id="bkTitle"></h2>
+      <div class="field">
+        <label for="bName">Name</label>
+        <input id="bName" maxlength="200" autocomplete="off" aria-describedby="err-bName">
+        <p class="err" id="err-bName"></p>
+      </div>
+      <fieldset class="limits">
+        <legend>Keep</legend>
+        <p class="hint" id="bHint"></p>
+        <div class="field"><label for="bDaily">Daily</label><div class="suffix"><input id="bDaily" type="number" inputmode="numeric" min="0" max="3650" aria-describedby="err-bDaily"><span>days</span></div><p class="err" id="err-bDaily"></p></div>
+        <div class="field"><label for="bWeekly">Weekly</label><div class="suffix"><input id="bWeekly" type="number" inputmode="numeric" min="0" max="3650" aria-describedby="err-bWeekly"><span>weeks</span></div><p class="err" id="err-bWeekly"></p></div>
+        <div class="field"><label for="bMonthly">Monthly</label><div class="suffix"><input id="bMonthly" type="number" inputmode="numeric" min="0" max="3650" aria-describedby="err-bMonthly"><span>months</span></div><p class="err" id="err-bMonthly"></p></div>
+        <div class="field"><label for="bYearly">Yearly</label><div class="suffix"><input id="bYearly" type="number" inputmode="numeric" min="0" max="3650" aria-describedby="err-bYearly"><span>years</span></div><p class="err" id="err-bYearly"></p></div>
+      </fieldset>
+      <p class="err" id="bMsg" role="alert"></p>
+      <div class="actions">
+        <button type="button" class="btn" id="bClose">Close</button>
+        <button type="submit" class="btn primary" id="bApply">Save changes</button>
+      </div>
+    </form>
   </dialog>
 
 <script>
@@ -649,12 +719,14 @@ function returnFocus(dlg, fallback) {
 }
 
 /* revoke */
-let revoking = null;
-function askRevoke(d, opener) {
-  revoking = d;
+let revoking = null, revokingBackup = false;
+function askRevoke(d, opener, backup = false) {
+  revoking = d; revokingBackup = backup;
   $('revokeTitle').textContent = `Revoke “${d.name}”?`;
-  $('revokeBody').textContent = `The link stops working immediately. ${plural(d.devices, 'device')} and ${plural(d.files, 'file')} are affected. ` +
-    'Uploaded files stay in Google Drive. This can’t be undone.';
+  $('revokeBody').textContent = backup
+    ? 'The token stops working immediately, so scripts using it will fail. Files already in Google Drive stay, and are no longer pruned. This can’t be undone.'
+    : `The link stops working immediately. ${plural(d.devices, 'device')} and ${plural(d.files, 'file')} are affected. ` +
+      'Uploaded files stay in Google Drive. This can’t be undone.';
   $('revokeErr').hidden = true;
   $('revokeGo').disabled = false;
   $('revokeDlg')._opener = opener || document.activeElement;
@@ -668,11 +740,16 @@ $('revokeGo').onclick = async () => {
   const d = revoking, btn = $('revokeGo');
   btn.disabled = true;
   try {
-    await api(`/dropboxes/${d.id}/revoke`, { method: 'POST' });
+    await api(`/${revokingBackup ? 'backups' : 'dropboxes'}/${d.id}/revoke`, { method: 'POST' });
   } catch (e) {
     $('revokeErr').textContent = 'Could not revoke: ' + e.message; $('revokeErr').hidden = false; btn.disabled = false; return;
   }
   $('revokeDlg').close();
+  if (revokingBackup) {
+    await loadBackups();
+    notice('info', [el('span', {}, `Revoked backup share “${d.name}”.`)]).focus();
+    return;
+  }
   const listed = $('showRevoked').checked; // otherwise the row leaves the list
   if (!listed) await animateOut(d.id);
   await load();
@@ -818,26 +895,42 @@ function setDest(d) {
 function fieldError(key, text) {
   const p = $('err-' + key);
   p.textContent = text;
-  const input = { name: $('name'), expires: $('expires'), window: $('window'), devices: $('devices') }[key];
+  const input = { name: $('name'), expires: $('expires'), window: $('window'), devices: $('devices'),
+    rDaily: $('rDaily'), rWeekly: $('rWeekly'), rMonthly: $('rMonthly'), rYearly: $('rYearly') }[key];
   if (input) { if (text) input.setAttribute('aria-invalid', 'true'); else input.removeAttribute('aria-invalid'); }
 }
 const intIn = (id, lo, hi) => { const v = $(id).value.trim(); const n = Number(v); return v !== '' && Number.isInteger(n) && n >= lo && n <= hi ? n : null; };
+const RETAIN = [['rDaily', 'keep_daily'], ['rWeekly', 'keep_weekly'], ['rMonthly', 'keep_monthly'], ['rYearly', 'keep_yearly']];
+const intOrNull = (id, lo, hi) => { const v = $(id).value.trim(); const n = Number(v); return v !== '' && Number.isInteger(n) && n >= lo && n <= hi ? n : null; };
 function validate() {
+  const keeps = RETAIN.map(([id]) => intOrNull(id, 0, 3650));
   const checks = [
     ['name', $('name'), $('name').value.trim() ? '' : 'Name is required.'],
     ['dest', $('folderList'), dest ? '' : 'Choose a destination folder.'],
-    ['expires', $('expires'), intIn('expires', 1, 365) ? '' : 'Enter a whole number from 1 to 365.'],
-    ['window', $('window'), intIn('window', 1, 720) ? '' : 'Enter a whole number from 1 to 720.'],
-    ['devices', $('devices'), intIn('devices', 1, 50) ? '' : 'Enter a whole number from 1 to 50.'],
+    ...(formMode === 'backup' ? RETAIN.map(([id], i) => [id, $(id),
+      keeps[i] == null ? 'Enter a whole number from 0 to 3650.'
+        : id === 'rDaily' && keeps.every((n) => n === 0) ? 'Keep at least one period.' : '']) : [
+      ['expires', $('expires'), intIn('expires', 1, 365) ? '' : 'Enter a whole number from 1 to 365.'],
+      ['window', $('window'), intIn('window', 1, 720) ? '' : 'Enter a whole number from 1 to 720.'],
+      ['devices', $('devices'), intIn('devices', 1, 50) ? '' : 'Enter a whole number from 1 to 50.'],
+    ]),
   ];
   checks.forEach(([k, , msg]) => fieldError(k, msg));
   const bad = checks.find((c) => c[2]);
   if (bad) bad[1].focus();
   return !bad;
 }
-['name', 'expires', 'window', 'devices'].forEach((k) => $(k).addEventListener('input', () => fieldError(k, '')));
+['name', 'expires', 'window', 'devices', 'rDaily', 'rWeekly', 'rMonthly', 'rYearly'].forEach((k) => $(k).addEventListener('input', () => fieldError(k, '')));
 
-function openForm() {
+let formMode = 'dropbox';
+function setMode(mode) {
+  formMode = mode;
+  const bk = mode === 'backup';
+  $('formTitle').textContent = bk ? 'New backup share' : 'New dropbox';
+  $('pwField').hidden = bk; $('limitsSet').hidden = bk; $('retainSet').hidden = !bk;
+}
+function openForm(mode = 'dropbox') {
+  setMode(mode);
   $('formError').textContent = '';
   $('formDlg')._opener = document.activeElement;
   $('formDlg').showModal();
@@ -845,14 +938,15 @@ function openForm() {
 }
 function resetForm() {
   $('form').reset();
-  ['name', 'dest', 'expires', 'window', 'devices'].forEach((k) => fieldError(k, ''));
+  ['name', 'dest', 'expires', 'window', 'devices', 'rDaily', 'rWeekly', 'rMonthly', 'rYearly'].forEach((k) => fieldError(k, ''));
   setDest(null);
   picker.trail = [{ id: 'root', name: 'My Drive' }];
   browse();
 }
-$('newBtn').onclick = $('emptyNew').onclick = openForm;
+$('newBtn').onclick = $('emptyNew').onclick = () => openForm('dropbox');
+$('bkNewBtn').onclick = $('bkEmptyNew').onclick = () => openForm('backup');
 trapFocus($('formDlg'));
-returnFocus($('formDlg'), () => $('newBtn'));
+returnFocus($('formDlg'), () => (formMode === 'backup' ? $('bkNewBtn') : $('newBtn')));
 $('formCancel').onclick = () => $('formDlg').close();
 
 $('form').onsubmit = async (e) => {
@@ -861,6 +955,25 @@ $('form').onsubmit = async (e) => {
   if (!validate()) return;
   const btn = $('createBtn');
   btn.disabled = true; btn.textContent = 'Creating…';
+  if (formMode === 'backup') {
+    try {
+      const out = await api('/backups', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: $('name').value.trim(), gdrive_folder_id: dest.id, gdrive_folder_path: dest.path,
+          ...Object.fromEntries(RETAIN.map(([id, key]) => [key, intOrNull(id, 0, 3650)])) }),
+      });
+      $('formDlg').close();
+      resetForm();
+      await loadBackups();
+      showBackupCreated(out);
+      $('bkNewBtn').focus({ preventScroll: true });
+    } catch (err) {
+      $('formError').textContent = 'Could not create backup share: ' + err.message;
+    } finally {
+      btn.disabled = false; btn.textContent = 'Create';
+    }
+    return;
+  }
   try {
     const out = await api('/dropboxes', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1007,6 +1120,101 @@ trapFocus($('manageDlg'));
 returnFocus($('manageDlg'), () => rowOf(managing)?.querySelector('[data-kebab]') || $('newBtn'));
 $('manageClose').onclick = () => $('manageDlg').close();
 
+/* ---------- backup shares ---------- */
+let backups = [];
+const keepText = (b) => [[b.keep_daily, 'daily'], [b.keep_weekly, 'weekly'], [b.keep_monthly, 'monthly'], [b.keep_yearly, 'yearly']]
+  .filter(([n]) => n).map(([n, w]) => `${n} ${w}`).join(' · ');
+function showBackupCreated(out) {
+  const n = notice('success', [
+    el('strong', {}, 'Backup share created'),
+    el('p', { class: 'note' }, 'Copy the token now. It is stored hashed and cannot be shown again.'),
+    el('code', {}, out.token),
+    el('p', { class: 'note' }, 'Example upload (any file name; the server prunes by upload time):'),
+    el('code', {}, out.curl),
+  ], [copyButton('Copy token', out.token, { primary: true }), copyButton('Copy curl example', out.curl)]);
+  n.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+}
+function renderBackups() {
+  closeMenu();
+  const show = $('bkShowRevoked').checked;
+  const visible = backups.filter((b) => show || !b.is_revoked);
+  $('bkLoading').hidden = true;
+  $('bkToggleWrap').hidden = !backups.some((b) => b.is_revoked);
+  $('bkTbl').hidden = visible.length === 0;
+  $('bkEmpty').hidden = visible.length !== 0;
+  $('bkEmptyTitle').textContent = backups.length ? 'No active backup shares' : 'No backup shares yet';
+  $('bkList').replaceChildren(...visible.map((b) => {
+    const folder = b.gdrive_folder_path || 'Open in Drive';
+    return el('tr', { class: b.is_revoked ? 'dim' : '', 'data-id': b.id },
+      cell('name', 'Name', b.name, b.is_revoked ? el('span', { class: 'badge revoked' }, 'Revoked') : ''),
+      cell('folder', 'Folder', el('a', {
+        href: 'https://drive.google.com/drive/folders/' + encodeURIComponent(b.gdrive_folder_id),
+        target: '_blank', rel: 'noopener', title: folder + ' (opens in Drive)' }, folder)),
+      cell('', 'Last upload', b.last_upload_at ? el('span', { title: fmtDateTime(b.last_upload_at) }, relative(b.last_upload_at)) : 'Never'),
+      cell('num', 'Files', String(b.files), b.files ? el('div', { class: 'muted' }, fmtBytes(b.bytes)) : ''),
+      cell('', 'Keeps', keepText(b)),
+      cell('actions', '', kebab(`More actions for ${b.name}`, [
+        { icon: 'manage', label: 'Manage', onclick: (opener) => openBackup(b, opener), disabled: b.is_revoked, title: 'Revoked shares can’t be managed' },
+        { icon: 'revoke', label: 'Revoke', onclick: (opener) => askRevoke(b, opener, true), disabled: b.is_revoked, title: 'Already revoked', danger: true },
+      ], b.is_revoked)));
+  }));
+}
+async function loadBackups() {
+  try { backups = await api('/backups'); renderBackups(); }
+  catch (e) { $('bkLoading').hidden = true; notice('error', [el('strong', {}, 'Could not load backup shares'), el('span', {}, e.message)]); }
+}
+$('bkShowRevoked').onchange = renderBackups;
+
+let editingBackup = null;
+const BK_FIELDS = [['bDaily', 'keep_daily'], ['bWeekly', 'keep_weekly'], ['bMonthly', 'keep_monthly'], ['bYearly', 'keep_yearly']];
+function bkErr(key, text) {
+  $('err-' + key).textContent = text;
+  if (text) $(key).setAttribute('aria-invalid', 'true'); else $(key).removeAttribute('aria-invalid');
+}
+function fillBackup(b) {
+  $('bName').value = b.name;
+  BK_FIELDS.forEach(([id, key]) => { $(id).value = b[key]; });
+  $('bHint').textContent = `${plural(b.files, 'file')} now. Shortening this prunes older files as soon as you save.`;
+}
+function openBackup(b, opener) {
+  editingBackup = b.id;
+  $('bkTitle').textContent = `Manage “${b.name}”`;
+  ['bName', ...BK_FIELDS.map(([id]) => id)].forEach((id) => bkErr(id, ''));
+  $('bMsg').textContent = '';
+  fillBackup(b);
+  $('bkDlg')._opener = opener || document.activeElement;
+  $('bkDlg').showModal();
+}
+$('bkForm').onsubmit = async (e) => {
+  e.preventDefault();
+  $('bMsg').textContent = ''; $('bMsg').style.color = '';
+  const b = backups.find((x) => x.id === editingBackup), name = $('bName').value.trim();
+  bkErr('bName', name ? '' : 'Name is required.');
+  const vals = BK_FIELDS.map(([id, key]) => [id, key, intOrNull(id, 0, 3650)]);
+  vals.forEach(([id, , v]) => bkErr(id, v == null ? 'Enter a whole number from 0 to 3650.' : ''));
+  const bad = !name ? 'bName' : (vals.find(([, , v]) => v == null) || [])[0];
+  if (bad) return $(bad).focus();
+  if (!vals.some(([, , v]) => v)) { bkErr('bDaily', 'Keep at least one period.'); return $('bDaily').focus(); }
+  const body = {};
+  if (name !== b.name) body.name = name;
+  vals.forEach(([, key, v]) => { if (v !== b[key]) body[key] = v; });
+  if (!Object.keys(body).length) { $('bMsg').textContent = 'Nothing to change.'; return; }
+  const btn = $('bApply'); btn.disabled = true;
+  try {
+    const out = await api(`/backups/${b.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    await loadBackups();
+    fillBackup(backups.find((x) => x.id === b.id));
+    $('bkTitle').textContent = `Manage “${name}”`;
+    $('bMsg').textContent = out.pruned ? `Saved. ${plural(out.pruned, 'older file')} moved to the Drive trash.` : 'Saved.';
+  } catch (err) { $('bMsg').style.color = 'var(--danger)'; $('bMsg').textContent = 'Could not save: ' + err.message; }
+  finally { btn.disabled = false; }
+};
+['bName', ...BK_FIELDS.map(([id]) => id)].forEach((id) => $(id).addEventListener('input', () => bkErr(id, '')));
+closeOnBackdrop($('bkDlg'));
+trapFocus($('bkDlg'));
+returnFocus($('bkDlg'), () => $('bkNewBtn'));
+$('bClose').onclick = () => $('bkDlg').close();
+
 /* ---------- drive + email status ---------- */
 async function loadStatus() {
   let st;
@@ -1042,6 +1250,9 @@ const EVENT_LABEL = {
   dropbox_adjusted: 'Dropbox changed', dropbox_revoked: 'Dropbox revoked', device_revoked: 'Device revoked', admin_login: 'Admin login',
   admin_login_denied: 'Admin login denied', admin_logout: 'Admin logout', drive_status_changed: 'Drive status',
   notification_sent: 'Email sent', notification_failed: 'Email failed',
+  backup_created: 'Backup share created', backup_adjusted: 'Backup share changed', backup_revoked: 'Backup share revoked',
+  backup_uploaded: 'Backup', backup_failed: 'Backup failed', backup_aborted: 'Backup aborted',
+  backup_pruned: 'Backup pruned', backup_prune_failed: 'Prune failed', backup_auth_failed: 'Backup token rejected',
 };
 const PROBLEM = /failed|denied|aborted|blocked|revoked/;
 const fmtBytes = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : n < 1073741824 ? `${(n / 1048576).toFixed(1)} MB` : `${(n / 1073741824).toFixed(1)} GB`;
@@ -1089,6 +1300,7 @@ setInterval(() => { if (!document.hidden) loadStatus(); }, 60000);
 setDest(null);
 api('/me').then((m) => { $('who').textContent = m.email; }).catch(() => {});
 load();
+loadBackups();
 loadStatus();
 loadEvents(true);
 </script>
