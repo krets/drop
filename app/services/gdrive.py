@@ -17,6 +17,10 @@ class DriveError(Exception):
     pass
 
 
+class AuthError(DriveError):
+    """Google rejected our credentials: the admin has to authorize again."""
+
+
 _client: httpx.AsyncClient | None = None
 _tokens: dict[str, tuple[str, float]] = {}
 
@@ -39,9 +43,9 @@ async def close() -> None:
         await _client.aclose()
 
 
-async def access_token(refresh_token: str) -> str:
+async def access_token(refresh_token: str, force: bool = False) -> str:
     cached = _tokens.get(refresh_token)
-    if cached and cached[1] > time.monotonic() + 60:
+    if cached and not force and cached[1] > time.monotonic() + 60:
         return cached[0]
     r = await client().post(TOKEN_URI, data={
         "grant_type": "refresh_token",
@@ -49,8 +53,15 @@ async def access_token(refresh_token: str) -> str:
         "client_id": config.GOOGLE_CLIENT_ID,
         "client_secret": config.GOOGLE_CLIENT_SECRET,
     })
+    if r.status_code in (400, 401):  # invalid_grant (revoked/expired/password change) or a bad client
+        _tokens.pop(refresh_token, None)
+        try:
+            why = r.json().get("error", "")
+        except ValueError:
+            why = ""
+        raise AuthError(f"Google refused the stored login ({why or r.status_code})")
     if r.status_code != 200:
-        raise DriveError("Could not refresh the Google access token")
+        raise DriveError(f"Could not refresh the Google access token ({r.status_code})")
     body = r.json()
     _tokens[refresh_token] = (body["access_token"], time.monotonic() + body.get("expires_in", 3600))
     return body["access_token"]
@@ -59,9 +70,22 @@ async def access_token(refresh_token: str) -> str:
 async def _api(refresh_token: str, method: str, url: str, **kw) -> httpx.Response:
     headers = {"Authorization": f"Bearer {await access_token(refresh_token)}", **kw.pop("headers", {})}
     r = await client().request(method, url, headers=headers, **kw)
+    if r.status_code == 401:
+        _tokens.pop(refresh_token, None)
+        raise AuthError("Drive API 401")
     if r.status_code >= 400:
         raise DriveError(f"Drive API {r.status_code}")
     return r
+
+
+async def check(refresh_token: str) -> str:
+    """Heartbeat: force a token refresh and make one cheap authenticated call. Returns the Drive account's email."""
+    try:
+        await access_token(refresh_token, force=True)
+        r = await _api(refresh_token, "GET", f"{API}/about", params={"fields": "user(emailAddress)"})
+    except httpx.HTTPError as e:
+        raise DriveError(f"Drive unreachable ({type(e).__name__})") from e
+    return r.json().get("user", {}).get("emailAddress", "")
 
 
 async def list_folders(refresh_token: str, parent_id: str = "root") -> list[dict]:

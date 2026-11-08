@@ -29,6 +29,8 @@ class FakeDrive:
         self.fail_next_put = 0  # respond 503 to this many PUTs
         self.fail_sidecar = False
         self.refreshes = 0
+        self.token_status = 200  # what the OAuth token endpoint answers
+        self.offline = False  # every request fails at the transport level
 
     def add_folder(self, name="Folder"):
         fid = uuid.uuid4().hex
@@ -40,12 +42,18 @@ class FakeDrive:
 
     def handle(self, req: httpx.Request) -> httpx.Response:
         url, path = str(req.url), req.url.path
+        if self.offline:
+            raise httpx.ConnectError("offline")
         if url.startswith(gdrive.TOKEN_URI):
             self.refreshes += 1
+            if self.token_status != 200:
+                return httpx.Response(self.token_status, json={"error": "invalid_grant"})
             return httpx.Response(200, json={"access_token": "at", "expires_in": 3600})
         if path.startswith("/upload-session/"):
             return self._session(req, path.rsplit("/", 1)[1])
         assert req.headers.get("authorization") == "Bearer at", f"unauthenticated call to {url}"
+        if path == "/drive/v3/about":
+            return httpx.Response(200, json={"user": {"emailAddress": "admin@example.com"}})
         if path == "/upload/drive/v3/files":
             return self._upload(req)
         if path.startswith("/upload/drive/v3/files/") and req.method == "PATCH":
@@ -146,6 +154,7 @@ async def _noop():
 def app(tmp_path, monkeypatch, drive):
     monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "t.db"))
     monkeypatch.setattr(config, "ADMIN_EMAILS", ["admin@example.com"])
+    monkeypatch.setattr(config, "BACKGROUND_TASKS", False)  # tests drive the notifier and heartbeat by hand
     unlock_throttle.clear()
     with TestClient(main.app) as c:
         db = sqlite3.connect(config.DB_PATH)
@@ -203,3 +212,26 @@ def multipart(parts: list[tuple[dict, bytes]], boundary="XBOUNDARYX") -> tuple[d
         out += f"--{boundary}\r\n{head}\r\n\r\n".encode() + data + b"\r\n"
     out += f"--{boundary}--\r\n".encode()
     return {"Content-Type": f"multipart/form-data; boundary={boundary}"}, out
+
+
+class Outbox(list):
+    """Emails the app tried to send. Set `.fail` to make sending raise."""
+    fail = False
+
+
+@pytest.fixture
+def outbox(monkeypatch):
+    from services import mailer
+    box = Outbox()
+
+    async def send(subject, body):
+        if box.fail:
+            raise OSError("smtp down")
+        box.append((subject, body))
+
+    for k, v in (("SMTP_SERVER", "smtp.test"), ("SMTP_FROM", "drop@test"), ("NOTIFY_EMAILS", ["admin@example.com"])):
+        monkeypatch.setattr(config, k, v)
+    monkeypatch.setattr(mailer, "send", send)
+    from services import notifier
+    notifier._retry_at.clear()
+    return box

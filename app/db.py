@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 import config
@@ -21,6 +22,20 @@ def init_db() -> None:
         for col in ("user_agent", "last_seen_at"):
             if col not in have:
                 conn.execute(f"ALTER TABLE device_sessions ADD COLUMN {col} TEXT")
+        have = {row[1] for row in conn.execute("PRAGMA table_info(uploaded_files)")}
+        if "notified_at" not in have:
+            conn.execute("ALTER TABLE uploaded_files ADD COLUMN completed_at TEXT")
+            conn.execute("ALTER TABLE uploaded_files ADD COLUMN notified_at TEXT")
+            # uploads from before notifications existed must not trigger a flood of emails
+            now = datetime.now(timezone.utc).isoformat()
+            conn.execute("UPDATE uploaded_files SET completed_at = COALESCE(created_at, ?),"
+                         " notified_at = COALESCE(created_at, ?) WHERE status = 'completed'", (now, now))
+        have = {row[1] for row in conn.execute("PRAGMA table_info(admins)")}
+        for col, decl in (("drive_status", "TEXT NOT NULL DEFAULT 'unknown'"), ("drive_checked_at", "TEXT"),
+                          ("drive_ok_at", "TEXT"), ("drive_error", "TEXT"),
+                          ("drive_failures", "INTEGER NOT NULL DEFAULT 0"), ("drive_alerted_at", "TEXT")):
+            if col not in have:
+                conn.execute(f"ALTER TABLE admins ADD COLUMN {col} {decl}")
         # an interrupted upload leaves a row that no Drive file backs
         conn.execute("DELETE FROM uploaded_files WHERE status = 'uploading'")
         conn.executemany(

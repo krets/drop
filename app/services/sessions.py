@@ -1,4 +1,5 @@
 """Device onboarding: decide whether a visitor may enter a dropbox."""
+import hashlib
 import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -12,6 +13,11 @@ def utcnow() -> datetime:
 
 def _ts(value: str) -> datetime:
     return datetime.fromisoformat(value)
+
+
+def device_ref(session_id: str) -> str:
+    """Public handle for a device. The session id itself is the device's login cookie, so never expose it."""
+    return hashlib.sha256(session_id.encode()).hexdigest()[:16]
 
 
 SEEN_EVERY = timedelta(minutes=5)

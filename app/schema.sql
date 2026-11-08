@@ -31,14 +31,22 @@ CREATE TABLE IF NOT EXISTS uploaded_files (
     size              INTEGER,
     note              TEXT,
     created_at        TEXT,
-    status            TEXT NOT NULL DEFAULT 'uploading' CHECK (status IN ('uploading', 'completed'))
+    status            TEXT NOT NULL DEFAULT 'uploading' CHECK (status IN ('uploading', 'completed')),
+    completed_at      TEXT,
+    notified_at       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_files_session ON uploaded_files(session_id);
 
 CREATE TABLE IF NOT EXISTS admins (
     email         TEXT PRIMARY KEY,
     google_id     TEXT,
-    refresh_token TEXT
+    refresh_token TEXT,
+    drive_status     TEXT NOT NULL DEFAULT 'unknown',
+    drive_checked_at TEXT,
+    drive_ok_at      TEXT,
+    drive_error      TEXT,
+    drive_failures   INTEGER NOT NULL DEFAULT 0,
+    drive_alerted_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS comments (
@@ -50,3 +58,17 @@ CREATE TABLE IF NOT EXISTS comments (
     created_at     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_comments_session ON comments(session_id);
+
+-- Append-only audit trail. No foreign keys: it must outlive the rows it describes.
+CREATE TABLE IF NOT EXISTS events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          TEXT NOT NULL,
+    type        TEXT NOT NULL,
+    actor       TEXT NOT NULL,
+    dropbox_id  TEXT,
+    device_ref  TEXT,
+    ip          TEXT,
+    detail      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_events_dropbox ON events(dropbox_id, id);
+CREATE INDEX IF NOT EXISTS idx_events_type ON events(type, id);

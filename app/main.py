@@ -10,14 +10,21 @@ from starlette.middleware.sessions import SessionMiddleware
 
 import config
 from db import init_db
-from services import gdrive
+import asyncio
+
+from services import gdrive, heartbeat, notifier
 from routes import admin, auth, notes, public
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    tasks = [asyncio.create_task(t()) for t in (notifier.run_forever, heartbeat.run_forever)] \
+        if config.BACKGROUND_TASKS else []
     yield
+    for t in tasks:
+        t.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
     await gdrive.close()
 
 

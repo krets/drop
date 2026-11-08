@@ -6,12 +6,12 @@ read anything back out of Drive.
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, StringConstraints
 
 from db import get_db
-from routes.public import MAX_TEXT, current_session, owned_file, refresh_token_for
-from services import gdrive
+from routes.public import MAX_TEXT, _actor, current_session, owned_file, refresh_token_for
+from services import events, gdrive
 from services.sessions import utcnow
 
 router = APIRouter()
@@ -42,7 +42,7 @@ def my_comments(ctx=Depends(current_session), db=Depends(get_db)):
 
 
 @router.post("/api/comments", status_code=201)
-async def create_comment(body: Text, ctx=Depends(current_session), db=Depends(get_db)):
+async def create_comment(body: Text, request: Request, ctx=Depends(current_session), db=Depends(get_db)):
     token = refresh_token_for(db, ctx)
     now = utcnow()
     try:
@@ -57,11 +57,12 @@ async def create_comment(body: Text, ctx=Depends(current_session), db=Depends(ge
         (comment_id, ctx["id"], ctx["session_id"], file_id, body.text, now.isoformat()),
     )
     db.commit()
+    events.log(db, "comment_created", actor=_actor(ctx), dropbox_id=ctx["id"], session_id=ctx["session_id"], request=request, comment_id=comment_id, chars=len(body.text))
     return {"id": comment_id, "text": body.text, "created_at": now.isoformat()}
 
 
 @router.patch("/api/comments/{comment_id}")
-async def edit_comment(comment_id: str, body: Text, ctx=Depends(current_session), db=Depends(get_db)):
+async def edit_comment(comment_id: str, body: Text, request: Request, ctx=Depends(current_session), db=Depends(get_db)):
     row = _owned_comment(db, ctx, comment_id)
     try:
         await gdrive.update_text(refresh_token_for(db, ctx), row["gdrive_file_id"], body.text + "\n")
@@ -69,11 +70,12 @@ async def edit_comment(comment_id: str, body: Text, ctx=Depends(current_session)
         raise HTTPException(502, "Storage error")
     db.execute("UPDATE comments SET text = ? WHERE id = ?", (body.text, comment_id))
     db.commit()
+    events.log(db, "comment_edited", actor=_actor(ctx), dropbox_id=ctx["id"], session_id=ctx["session_id"], request=request, comment_id=comment_id, chars=len(body.text))
     return {"id": comment_id, "text": body.text}
 
 
 @router.delete("/api/comments/{comment_id}", status_code=204)
-async def delete_comment(comment_id: str, ctx=Depends(current_session), db=Depends(get_db)):
+async def delete_comment(comment_id: str, request: Request, ctx=Depends(current_session), db=Depends(get_db)):
     row = _owned_comment(db, ctx, comment_id)
     try:
         await gdrive.trash_file(refresh_token_for(db, ctx), row["gdrive_file_id"])
@@ -81,12 +83,13 @@ async def delete_comment(comment_id: str, ctx=Depends(current_session), db=Depen
         raise HTTPException(502, "Storage error")
     db.execute("DELETE FROM comments WHERE id = ?", (comment_id,))
     db.commit()
+    events.log(db, "comment_deleted", actor=_actor(ctx), dropbox_id=ctx["id"], session_id=ctx["session_id"], request=request, comment_id=comment_id)
 
 
 # --- per-file notes --------------------------------------------------------------------------
 
 @router.put("/api/files/{file_id}/note")
-async def set_note(file_id: str, body: Text, ctx=Depends(current_session), db=Depends(get_db)):
+async def set_note(file_id: str, body: Text, request: Request, ctx=Depends(current_session), db=Depends(get_db)):
     row = owned_file(db, ctx, file_id)
     token = refresh_token_for(db, ctx)
     sidecar_id = row["sidecar_gdrive_id"]
@@ -101,11 +104,12 @@ async def set_note(file_id: str, body: Text, ctx=Depends(current_session), db=De
     db.execute("UPDATE uploaded_files SET sidecar_gdrive_id = ?, note = ? WHERE id = ?",
                (sidecar_id, body.text, file_id))
     db.commit()
+    events.log(db, "note_set", actor=_actor(ctx), dropbox_id=ctx["id"], session_id=ctx["session_id"], request=request, file_id=file_id, filename=row['original_filename'])
     return {"id": file_id, "has_note": True, "note": body.text}
 
 
 @router.delete("/api/files/{file_id}/note", status_code=204)
-async def remove_note(file_id: str, ctx=Depends(current_session), db=Depends(get_db)):
+async def remove_note(file_id: str, request: Request, ctx=Depends(current_session), db=Depends(get_db)):
     row = owned_file(db, ctx, file_id)
     if row["sidecar_gdrive_id"]:
         try:
@@ -114,3 +118,4 @@ async def remove_note(file_id: str, ctx=Depends(current_session), db=Depends(get
             raise HTTPException(502, "Storage error")
     db.execute("UPDATE uploaded_files SET sidecar_gdrive_id = NULL, note = NULL WHERE id = ?", (file_id,))
     db.commit()
+    events.log(db, "note_removed", actor=_actor(ctx), dropbox_id=ctx["id"], session_id=ctx["session_id"], request=request, file_id=file_id, filename=row['original_filename'])

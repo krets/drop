@@ -49,6 +49,16 @@
     .notice.compact strong { flex: none; }
     .notice.compact .url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
     .notice.compact .btn { flex: none; }
+    .notice.warn { border-left-color: var(--warn); }
+    #statusLine { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; margin-bottom: var(--s3); font-size: .85rem; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
+    .dot.ok { background: var(--ok); } .dot.bad { background: var(--danger); } .dot.warn { background: var(--warn); }
+    #events td { font-size: .85rem; vertical-align: top; }
+    #events td.when { white-space: nowrap; color: var(--muted); }
+    #events td.detail { overflow-wrap: anywhere; color: var(--muted); }
+    #events tr.problem td:nth-child(2) { color: var(--danger); }
+    .log-tools { display: flex; gap: var(--s1); align-items: center; flex-wrap: wrap; margin-left: auto; }
+    select { min-height: 36px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 4px var(--s1); }
     .row { display: flex; gap: var(--s1); flex-wrap: wrap; align-items: center; }
 
     /* list */
@@ -202,7 +212,14 @@
   </header>
 
   <main class="wrap">
+    <div id="driveBanner" class="notice error" role="alert" hidden></div>
     <div id="notice" role="status" tabindex="-1" hidden></div>
+    <div id="statusLine" class="muted">
+      <span><span class="dot" id="driveDot"></span><span id="driveText">Checking Google Drive…</span></span>
+      <span id="emailText"></span>
+      <button class="link-btn" type="button" id="testEmail" hidden>Send test email</button>
+      <span id="testMsg" role="status"></span>
+    </div>
 
     <section aria-labelledby="listHead">
       <div class="section-head">
@@ -225,6 +242,23 @@
         </tr></thead>
         <tbody id="list"></tbody>
       </table>
+    </section>
+
+    <section aria-labelledby="logHead" style="margin-top: var(--s5)">
+      <div class="section-head">
+        <h2 id="logHead">Activity</h2>
+        <div class="log-tools">
+          <label class="sr" for="logType">Event type</label>
+          <select id="logType"><option value="">All events</option></select>
+          <button class="btn" type="button" id="logRefresh">Refresh</button>
+        </div>
+      </div>
+      <p class="muted" id="logEmpty" hidden>Nothing recorded yet.</p>
+      <table id="events" hidden>
+        <thead><tr><th scope="col">When</th><th scope="col">Event</th><th scope="col">Dropbox</th><th scope="col">Who</th><th scope="col">Details</th></tr></thead>
+        <tbody id="logList"></tbody>
+      </table>
+      <div class="actions" style="margin-top: var(--s2)"><button class="btn" type="button" id="logMore" hidden>Load older</button></div>
     </section>
   </main>
 
@@ -973,9 +1007,90 @@ trapFocus($('manageDlg'));
 returnFocus($('manageDlg'), () => rowOf(managing)?.querySelector('[data-kebab]') || $('newBtn'));
 $('manageClose').onclick = () => $('manageDlg').close();
 
+/* ---------- drive + email status ---------- */
+async function loadStatus() {
+  let st;
+  try { st = await api('/status'); } catch { return; }
+  const d = st.drive, banner = $('driveBanner');
+  const checked = d.checked_at ? `checked ${relative(d.checked_at)}` : 'not checked yet';
+  const label = { ok: 'Google Drive connected', unknown: 'Checking Google Drive…', auth_required: 'Google Drive needs you to sign in again',
+    unreachable: 'Google Drive is unreachable', not_connected: 'Google Drive is not connected' }[d.status] || d.status;
+  $('driveDot').className = 'dot ' + (d.status === 'ok' ? 'ok' : d.status === 'unknown' ? '' : d.status === 'unreachable' ? 'warn' : 'bad');
+  $('driveText').textContent = `${label} (${checked})`;
+  const needsLogin = d.status === 'auth_required' || d.status === 'not_connected';
+  banner.hidden = !needsLogin && d.status !== 'unreachable';
+  banner.className = 'notice ' + (needsLogin ? 'error' : 'warn');
+  banner.replaceChildren(el('strong', {}, label), el('span', {}, d.error || ''),
+    needsLogin ? el('div', { class: 'row' }, el('a', { class: 'btn primary', href: '/auth/google/login' }, 'Sign in with Google')) : '');
+  $('emailText').textContent = st.email.configured ? `Notifications go to ${st.email.to.join(', ')}` : 'Email is not configured: no notifications will be sent';
+  $('testEmail').hidden = !st.email.configured;
+}
+$('testEmail').onclick = async () => {
+  const msg = $('testMsg'), b = $('testEmail');
+  b.disabled = true; msg.textContent = 'Sending…';
+  try { await api('/notifications/test', { method: 'POST' }); msg.textContent = 'Sent.'; loadEvents(true); }
+  catch (e) { msg.textContent = 'Failed: ' + e.message; }
+  finally { b.disabled = false; setTimeout(() => { msg.textContent = ''; }, 6000); }
+};
+
+/* ---------- activity log ---------- */
+const EVENT_LABEL = {
+  upload_completed: 'Upload', upload_failed: 'Upload failed', upload_aborted: 'Upload aborted', file_renamed: 'File renamed',
+  file_deleted: 'File deleted', note_set: 'Note saved', note_removed: 'Note removed', comment_created: 'Comment added',
+  comment_edited: 'Comment edited', comment_deleted: 'Comment deleted', device_onboarded: 'New device', access_denied: 'Access denied',
+  unlock_failed: 'Wrong password', unlock_throttled: 'Password attempts blocked', dropbox_created: 'Dropbox created',
+  dropbox_adjusted: 'Dropbox changed', dropbox_revoked: 'Dropbox revoked', device_revoked: 'Device revoked', admin_login: 'Admin login',
+  admin_login_denied: 'Admin login denied', admin_logout: 'Admin logout', drive_status_changed: 'Drive status',
+  notification_sent: 'Email sent', notification_failed: 'Email failed',
+};
+const PROBLEM = /failed|denied|aborted|blocked|revoked/;
+const fmtBytes = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : n < 1073741824 ? `${(n / 1048576).toFixed(1)} MB` : `${(n / 1073741824).toFixed(1)} GB`;
+function detailText(e) {
+  const d = e.detail || {};
+  const bits = Object.entries(d).filter(([k]) => !['file_id', 'comment_id', 'raw'].includes(k)).map(([k, v]) => {
+    if (k === 'size') return fmtBytes(v);
+    if (Array.isArray(v)) v = v.join(', ');
+    return typeof v === 'boolean' ? (v ? k : '') : `${k.replace(/_/g, ' ')}: ${v}`;
+  }).filter(Boolean);
+  if (e.device_ref) bits.push(`device ${e.device_ref.slice(0, 6)}`);
+  if (e.ip) bits.push(e.ip);
+  return bits.join(' · ');
+}
+let logNext = null;
+async function loadEvents(reset) {
+  const q = new URLSearchParams({ limit: '50' });
+  if (!reset && logNext) q.set('before', logNext);
+  if ($('logType').value) q.set('type', $('logType').value);
+  let out;
+  try { out = await api('/events?' + q); } catch (e) { $('logEmpty').hidden = false; $('logEmpty').textContent = 'Could not load activity: ' + e.message; return; }
+  const rows = out.events.map((e) => el('tr', { class: PROBLEM.test(e.type) ? 'problem' : '' },
+    el('td', { class: 'when', title: e.ts }, fmtDateTime(e.ts)),
+    el('td', {}, EVENT_LABEL[e.type] || e.type),
+    el('td', {}, e.dropbox_name || (e.dropbox_id ? e.dropbox_id.slice(0, 8) : '')),
+    el('td', {}, e.actor.replace(/^device:.*/, 'uploader').replace(/^admin:/, '')),
+    el('td', { class: 'detail' }, detailText(e))));
+  if (reset) $('logList').replaceChildren(...rows); else $('logList').append(...rows);
+  logNext = out.next;
+  $('logMore').hidden = !out.next;
+  $('events').hidden = !$('logList').children.length;
+  $('logEmpty').hidden = !!$('logList').children.length;
+  $('logEmpty').textContent = 'Nothing recorded yet.';
+  if (reset) {
+    const cur = $('logType').value;
+    $('logType').replaceChildren(el('option', { value: '' }, 'All events'),
+      ...out.types.map((t) => el('option', { value: t, selected: t === cur }, EVENT_LABEL[t] || t)));
+  }
+}
+$('logType').onchange = () => loadEvents(true);
+$('logRefresh').onclick = () => { loadStatus(); loadEvents(true); };
+$('logMore').onclick = () => loadEvents(false);
+setInterval(() => { if (!document.hidden) loadStatus(); }, 60000);
+
 setDest(null);
 api('/me').then((m) => { $('who').textContent = m.email; }).catch(() => {});
 load();
+loadStatus();
+loadEvents(true);
 </script>
 </body>
 </html>

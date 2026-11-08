@@ -13,12 +13,30 @@ Stack: Traefik (external), FastAPI, SQLite, Uppy.js, Google Drive API v3.
 - `app/routes/public.py` - `/drop/{id}`, password unlock, and the uploader API
 - `app/tests/` - pytest suite against a fake Drive
 - `app/routes/admin.py` - Google-OAuth-gated admin
+- `app/services/notifier.py` - batches finished uploads into one email per device
+- `app/services/heartbeat.py` - checks the stored Google login and emails when it needs attention
+- `app/services/events.py` - append-only audit log (`events` table, shown under Activity in the admin)
+- `app/services/mailer.py` - SMTP sender
 - `app/static/` - frontend
 
 ## Run
 
     cp .env.example .env   # fill in
     docker compose up -d --build
+
+## Notifications and monitoring
+
+Set `SMTP_SERVER`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` in `.env` (optional: `SMTP_FROM`, `SMTP_SECURITY`
+= `starttls`/`ssl`/`none`, `NOTIFY_EMAILS`; recipients default to `ADMIN_EMAILS`). Mail goes over SMTP rather
+than the Gmail API so the "sign in to Google again" alert never depends on the login it reports on.
+
+- **Upload notice**: one email per device, sent after `NOTIFY_QUIET_SECONDS` (120) without upload activity,
+  and at the latest `NOTIFY_MAX_WAIT_SECONDS` (900) after its first file. Files deleted meanwhile are left out.
+- **Heartbeat**: every `HEARTBEAT_INTERVAL_SECONDS` (900) the refresh token is exercised against Drive.
+  A rejected login emails immediately; other failures email after `HEARTBEAT_FAILURES` (3) in a row. Alerts repeat
+  every `ALERT_REMINDER_HOURS` (24) and a "restored" mail follows recovery. Signing in again re-checks at once.
+- **Audit log**: logins, dropbox changes, device onboarding and revocation, failed passwords, every upload,
+  rename and delete, Drive status changes and each email sent or failed. Rows are never edited or deleted by the app.
 
 ## Local development
 

@@ -8,9 +8,10 @@ from starlette.requests import ClientDisconnect
 
 import config
 from db import get_db
-from services import gdrive
+from services import events, gdrive, heartbeat
 from services.multipart_stream import boundary_of, stream_multipart
-from services.sessions import AccessDenied, PasswordRequired, WrongPassword, authorize, session_context, utcnow
+from services.sessions import (AccessDenied, PasswordRequired, WrongPassword, authorize, device_ref,
+                               session_context, utcnow)
 from services.throttle import unlock_throttle
 
 router = APIRouter()
@@ -55,10 +56,13 @@ def drop_page(dropbox_id: str, request: Request, device_session: str | None = Co
     except PasswordRequired:
         return FileResponse("static/password.html")
     except AccessDenied:
+        events.log(db, "access_denied", actor="visitor", dropbox_id=dropbox_id, request=request)
         raise HTTPException(403, "Forbidden")
     resp = FileResponse("static/drop.html")
     if is_new:
         _set_device_cookie(resp, session_id)
+        events.log(db, "device_onboarded", actor=f"device:{device_ref(session_id)}", dropbox_id=dropbox_id,
+                   session_id=session_id, request=request, user_agent=(request.headers.get("user-agent") or "")[:200])
     return resp
 
 
@@ -71,6 +75,7 @@ def unlock(dropbox_id: str, body: Unlock, request: Request, device_session: str 
            db=Depends(get_db)):
     key = f"{dropbox_id}:{request.client.host if request.client else ''}"
     if unlock_throttle.blocked(key):
+        events.log(db, "unlock_throttled", actor="visitor", dropbox_id=dropbox_id, request=request)
         raise HTTPException(429, "Too many attempts; try again later")
     try:
         _, session_id, is_new = authorize(
@@ -79,12 +84,16 @@ def unlock(dropbox_id: str, body: Unlock, request: Request, device_session: str 
         raise HTTPException(400)
     except WrongPassword:
         unlock_throttle.fail(key)
+        events.log(db, "unlock_failed", actor="visitor", dropbox_id=dropbox_id, request=request)
         raise HTTPException(401, "Wrong password")
     except AccessDenied:
+        events.log(db, "access_denied", actor="visitor", dropbox_id=dropbox_id, request=request)
         raise HTTPException(403, "Forbidden")
     resp = JSONResponse({"ok": True})
     if is_new:
         _set_device_cookie(resp, session_id)
+        events.log(db, "device_onboarded", actor=f"device:{device_ref(session_id)}", dropbox_id=dropbox_id,
+                   session_id=session_id, request=request, user_agent=(request.headers.get("user-agent") or "")[:200])
     return resp
 
 
@@ -165,10 +174,12 @@ async def upload(request: Request, ctx=Depends(current_session), db=Depends(get_
                 token, ctx["gdrive_folder_id"], f"{filename}.meta.txt", note + "\n")
         db.execute(
             "UPDATE uploaded_files SET gdrive_file_id = ?, sidecar_gdrive_id = ?, note = ?, size = ?,"
-            " status = 'completed' WHERE id = ?",
-            (file_id, sidecar_id, note or None, size, record_id),
+            " status = 'completed', completed_at = ? WHERE id = ?",
+            (file_id, sidecar_id, note or None, size, utcnow().isoformat(), record_id),
         )
         db.commit()
+        events.log(db, "upload_completed", actor=_actor(ctx), dropbox_id=ctx["id"], session_id=ctx["session_id"],
+                   request=request, file_id=record_id, filename=filename, size=size, has_note=bool(note))
         return {"id": record_id, "filename": filename, "size": size, "created_at": created_at,
                 "has_note": bool(note), "note": note}
 
@@ -183,13 +194,24 @@ async def upload(request: Request, ctx=Depends(current_session), db=Depends(get_
         if record_id:
             db.execute("DELETE FROM uploaded_files WHERE id = ?", (record_id,))
             db.commit()
+        if filename and not isinstance(e, ClientDisconnect):
+            events.log(db, "upload_failed", actor=_actor(ctx), dropbox_id=ctx["id"], session_id=ctx["session_id"],
+                       request=request, filename=filename, size=size, error=f"{type(e).__name__}: {e}"[:200])
+        if isinstance(e, gdrive.AuthError):
+            heartbeat.nudge()
         if isinstance(e, ClientDisconnect):
+            events.log(db, "upload_aborted", actor=_actor(ctx), dropbox_id=ctx["id"], session_id=ctx["session_id"],
+                       request=request, filename=filename, size=size)
             return Response(status_code=499)
         if isinstance(e, gdrive.DriveError):
             raise HTTPException(502, "Storage error") from e
         if isinstance(e, ValueError):  # malformed multipart
             raise HTTPException(400, "Malformed upload") from e
         raise
+
+
+def _actor(ctx) -> str:
+    return f"device:{device_ref(ctx['session_id'])}"
 
 
 def owned_file(db, ctx, file_id: str):
@@ -207,7 +229,7 @@ class Rename(BaseModel):
 
 
 @router.patch("/api/files/{file_id}")
-async def rename_file(file_id: str, body: Rename, ctx=Depends(current_session), db=Depends(get_db)):
+async def rename_file(file_id: str, body: Rename, request: Request, ctx=Depends(current_session), db=Depends(get_db)):
     row = owned_file(db, ctx, file_id)
     name = clean_filename(body.filename)
     token = refresh_token_for(db, ctx)
@@ -219,11 +241,13 @@ async def rename_file(file_id: str, body: Rename, ctx=Depends(current_session), 
         raise HTTPException(502, "Storage error")
     db.execute("UPDATE uploaded_files SET original_filename = ? WHERE id = ?", (name, file_id))
     db.commit()
+    events.log(db, "file_renamed", actor=_actor(ctx), dropbox_id=ctx["id"], session_id=ctx["session_id"],
+               request=request, file_id=file_id, old=row["original_filename"], new=name)
     return {"id": file_id, "filename": name}
 
 
 @router.delete("/api/files/{file_id}", status_code=204)
-async def delete_file(file_id: str, ctx=Depends(current_session), db=Depends(get_db)):
+async def delete_file(file_id: str, request: Request, ctx=Depends(current_session), db=Depends(get_db)):
     row = owned_file(db, ctx, file_id)
     token = refresh_token_for(db, ctx)
     try:
@@ -234,3 +258,5 @@ async def delete_file(file_id: str, ctx=Depends(current_session), db=Depends(get
         raise HTTPException(502, "Storage error")
     db.execute("DELETE FROM uploaded_files WHERE id = ?", (file_id,))
     db.commit()
+    events.log(db, "file_deleted", actor=_actor(ctx), dropbox_id=ctx["id"], session_id=ctx["session_id"],
+               request=request, file_id=file_id, filename=row["original_filename"])

@@ -1,5 +1,5 @@
 import asyncio
-import hashlib
+import json
 import math
 import uuid
 from datetime import datetime, timedelta
@@ -7,14 +7,14 @@ from typing import Annotated
 
 import bcrypt
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 import config
 from db import get_db
-from services import gdrive
-from services.sessions import utcnow
+from services import events, gdrive, mailer
+from services.sessions import device_ref, utcnow
 
 router = APIRouter(prefix="/admin")
 
@@ -77,7 +77,7 @@ def helper_text(dropbox_id: str, password: str | None, days: int, hours: int, de
 
 
 @router.post("/api/dropboxes", status_code=201)
-async def create_dropbox(body: DropboxIn, admin=Depends(require_admin), db=Depends(get_db)):
+async def create_dropbox(body: DropboxIn, request: Request, admin=Depends(require_admin), db=Depends(get_db)):
     try:
         folder = await gdrive.get_folder(_token(admin), body.gdrive_folder_id)  # must exist and be a folder
     except gdrive.DriveError:
@@ -94,6 +94,10 @@ async def create_dropbox(body: DropboxIn, admin=Depends(require_admin), db=Depen
          body.onboard_window_hours, body.max_devices, body.gdrive_folder_path or folder["name"]),
     )
     db.commit()
+    events.log(db, "dropbox_created", actor=f"admin:{admin['email']}", dropbox_id=dropbox_id, request=request,
+               name=body.name, folder=body.gdrive_folder_path or folder["name"], has_password=bool(body.password),
+               expires_in_days=body.expires_in_days, onboard_window_hours=body.onboard_window_hours,
+               max_devices=body.max_devices)
     return {
         "id": dropbox_id,
         "url": f"{config.BASE_URL}/drop/{dropbox_id}",
@@ -136,13 +140,13 @@ async def list_dropboxes(admin=Depends(require_admin), db=Depends(get_db)):
 
 
 @router.post("/api/dropboxes/{dropbox_id}/revoke")
-def revoke_dropbox(dropbox_id: str, _=Depends(require_admin), db=Depends(get_db)):
+def revoke_dropbox(dropbox_id: str, request: Request, admin=Depends(require_admin), db=Depends(get_db)):
     cur = db.execute("UPDATE dropboxes SET is_revoked = 1 WHERE id = ?", (dropbox_id,))
     if cur.rowcount == 0:
         raise HTTPException(404)
     db.commit()
+    events.log(db, "dropbox_revoked", actor=f"admin:{admin['email']}", dropbox_id=dropbox_id, request=request)
     return {"ok": True}
-
 
 
 class Adjust(BaseModel):
@@ -160,7 +164,7 @@ class Adjust(BaseModel):
 
 
 @router.patch("/api/dropboxes/{dropbox_id}")
-def adjust_dropbox(dropbox_id: str, body: Adjust, _=Depends(require_admin), db=Depends(get_db)):
+def adjust_dropbox(dropbox_id: str, body: Adjust, request: Request, admin=Depends(require_admin), db=Depends(get_db)):
     box = db.execute("SELECT * FROM dropboxes WHERE id = ?", (dropbox_id,)).fetchone()
     if box is None:
         raise HTTPException(404)
@@ -180,13 +184,10 @@ def adjust_dropbox(dropbox_id: str, body: Adjust, _=Depends(require_admin), db=D
     db.execute("UPDATE dropboxes SET name = ?, expires_at = ?, onboard_window_hours = ?, max_devices = ? WHERE id = ?",
                (name, expires_at, hours, devices, dropbox_id))
     db.commit()
+    events.log(db, "dropbox_adjusted", actor=f"admin:{admin['email']}", dropbox_id=dropbox_id, request=request,
+               **body.model_dump(exclude_none=True))
     return {"id": dropbox_id, "name": name, "expires_at": expires_at, "onboard_window_hours": hours,
             "max_devices": devices}
-
-
-def _device_ref(session_id: str) -> str:
-    """Public handle for a device. The session id itself is the device's login cookie, so never expose it."""
-    return hashlib.sha256(session_id.encode()).hexdigest()[:16]
 
 
 @router.get("/api/dropboxes/{dropbox_id}/devices")
@@ -200,15 +201,67 @@ def list_devices(dropbox_id: str, _=Depends(require_admin), db=Depends(get_db)):
         " FROM device_sessions s WHERE s.dropbox_id = ? ORDER BY s.created_at",
         (dropbox_id,),
     ).fetchall()
-    return [{"ref": _device_ref(r["id"]), **{k: r[k] for k in r.keys() if k != "id"}} for r in rows]
+    return [{"ref": device_ref(r["id"]), **{k: r[k] for k in r.keys() if k != "id"}} for r in rows]
 
 
 @router.post("/api/dropboxes/{dropbox_id}/devices/{ref}/revoke")
-def revoke_device(dropbox_id: str, ref: str, _=Depends(require_admin), db=Depends(get_db)):
+def revoke_device(dropbox_id: str, ref: str, request: Request, admin=Depends(require_admin), db=Depends(get_db)):
     ids = [r["id"] for r in db.execute("SELECT id FROM device_sessions WHERE dropbox_id = ?", (dropbox_id,))]
-    match = next((i for i in ids if _device_ref(i) == ref), None)
+    match = next((i for i in ids if device_ref(i) == ref), None)
     if match is None:
         raise HTTPException(404)
     db.execute("UPDATE device_sessions SET is_revoked = 1 WHERE id = ?", (match,))
     db.commit()
+    events.log(db, "device_revoked", actor=f"admin:{admin['email']}", dropbox_id=dropbox_id, session_id=match,
+               request=request)
     return {"ok": True}
+
+
+# --- status and audit log ----------------------------------------------------------------------
+
+@router.get("/api/status")
+def status(admin=Depends(require_admin)):
+    return {
+        "drive": {"status": admin["drive_status"], "checked_at": admin["drive_checked_at"],
+                  "ok_at": admin["drive_ok_at"], "error": admin["drive_error"] if admin["drive_status"] != "ok" else None},
+        "email": {"configured": mailer.configured(), "to": config.NOTIFY_EMAILS},
+    }
+
+
+@router.post("/api/notifications/test")
+async def test_email(request: Request, admin=Depends(require_admin), db=Depends(get_db)):
+    if not mailer.configured():
+        raise HTTPException(409, "SMTP is not configured")
+    try:
+        await mailer.send("[Drop] Test notification", "If you can read this, upload and Drive alerts will reach you.\n")
+    except Exception as e:
+        events.log(db, "notification_failed", actor=f"admin:{admin['email']}", request=request, kind="test",
+                   error=f"{type(e).__name__}: {e}"[:300])
+        raise HTTPException(502, f"Could not send: {type(e).__name__}")
+    events.log(db, "notification_sent", actor=f"admin:{admin['email']}", request=request, kind="test",
+               to=config.NOTIFY_EMAILS)
+    return {"ok": True}
+
+
+def _detail(text: str | None) -> dict:
+    try:
+        return json.loads(text or "{}")
+    except ValueError:  # truncated at the storage cap
+        return {"raw": text}
+
+
+@router.get("/api/events")
+def list_events(before: int | None = None, limit: int = Query(100, ge=1, le=500), type: str | None = None,
+                dropbox_id: str | None = None, _=Depends(require_admin), db=Depends(get_db)):
+    where, args = [], []
+    for col, val in (("id <", before), ("type =", type), ("dropbox_id =", dropbox_id)):
+        if val is not None:
+            where.append(f"{col} ?")
+            args.append(val)
+    rows = db.execute(
+        "SELECT e.*, d.name AS dropbox_name FROM events e LEFT JOIN dropboxes d ON d.id = e.dropbox_id"
+        + (" WHERE " + " AND ".join("e." + w for w in where) if where else "")
+        + " ORDER BY e.id DESC LIMIT ?", (*args, limit)).fetchall()
+    out = [{**dict(r), "detail": _detail(r["detail"])} for r in rows]
+    return {"events": out, "next": out[-1]["id"] if len(out) == limit else None,
+            "types": [r[0] for r in db.execute("SELECT DISTINCT type FROM events ORDER BY type")]}
